@@ -1,0 +1,643 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dither Shape Generator</title>
+<style>
+  /* ---- shadcn default dark theme tokens ---- */
+  .dark {
+    --background: 240 10% 3.9%;
+    --foreground: 0 0% 98%;
+    --card: 240 10% 3.9%;
+    --card-foreground: 0 0% 98%;
+    --popover: 240 10% 3.9%;
+    --popover-foreground: 0 0% 98%;
+    --primary: 0 0% 98%;
+    --primary-foreground: 240 5.9% 10%;
+    --secondary: 240 3.7% 15.9%;
+    --secondary-foreground: 0 0% 98%;
+    --muted: 240 3.7% 15.9%;
+    --muted-foreground: 240 5% 64.9%;
+    --accent: 240 3.7% 15.9%;
+    --accent-foreground: 0 0% 98%;
+    --border: 240 3.7% 15.9%;
+    --input: 240 3.7% 15.9%;
+    --ring: 240 4.9% 83.9%;
+    --radius: 0.5rem;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    background: hsl(var(--background));
+    color: hsl(var(--foreground));
+    display: grid;
+    grid-template-columns: 340px 1fr;
+    height: 100vh;
+  }
+  /* ---- Controls panel ---- */
+  .panel {
+    background: hsl(var(--card));
+    border-right: 1px solid hsl(var(--border));
+    overflow-y: auto;
+    padding: 18px 18px 48px;
+  }
+  .panel h1 { font-size: 15px; margin: 4px 0 2px; letter-spacing: .2px; }
+  .panel .sub { color: hsl(var(--muted-foreground)); font-size: 12px; margin-bottom: 18px; }
+  .group { margin-bottom: 22px; }
+  .group > .title {
+    display: block; font-size: 11px; text-transform: uppercase; letter-spacing: .6px;
+    color: hsl(var(--muted-foreground)); margin-bottom: 12px;
+  }
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
+  .row > label { color: hsl(var(--foreground)); flex: 1; }
+  .unit { color: hsl(var(--muted-foreground)); font-size: 12px; min-width: 18px; }
+
+  /* slider + editable number pairing */
+  .slider-row { display: block; margin-bottom: 16px; }
+  .slider-row .head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; gap: 8px; }
+  .slider-row .head label { color: hsl(var(--foreground)); }
+  .slider-row .head .num { display: flex; align-items: center; gap: 4px; }
+
+  input[type="range"] {
+    width: 100%; height: 18px; -webkit-appearance: none; appearance: none; background: transparent; cursor: pointer;
+  }
+  input[type="range"]::-webkit-slider-runnable-track {
+    height: 4px; border-radius: 999px; background: hsl(var(--secondary));
+  }
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none; appearance: none; margin-top: -6px;
+    width: 16px; height: 16px; border-radius: 50%;
+    background: hsl(var(--primary)); border: 1px solid hsl(var(--border));
+  }
+
+  input[type="number"], input[type="text"].hexinput {
+    width: 70px; background: hsl(var(--background)); border: 1px solid hsl(var(--input));
+    color: hsl(var(--foreground)); border-radius: calc(var(--radius) - 2px);
+    padding: 5px 7px; font: inherit; text-align: right; font-variant-numeric: tabular-nums;
+  }
+  input.num-sm { width: 62px; }
+  input[type="text"].hexinput { width: 86px; text-align: left; text-transform: lowercase; }
+  input:focus { outline: none; border-color: hsl(var(--ring)); box-shadow: 0 0 0 2px hsl(var(--ring) / .25); }
+
+  select {
+    background: hsl(var(--background)); border: 1px solid hsl(var(--input));
+    color: hsl(var(--foreground)); border-radius: calc(var(--radius) - 2px);
+    padding: 6px 8px; font: inherit; cursor: pointer;
+  }
+  .seg { display: inline-flex; background: hsl(var(--secondary)); border-radius: calc(var(--radius) - 2px); padding: 2px; gap: 2px; }
+  .seg button {
+    border: none; background: transparent; color: hsl(var(--muted-foreground));
+    padding: 5px 10px; border-radius: calc(var(--radius) - 4px); cursor: pointer; font: inherit; flex: none;
+  }
+  .seg button[aria-pressed="true"] { background: hsl(var(--background)); color: hsl(var(--foreground)); }
+
+  /* Figma-style swatch chip; empty hex field = transparent (checkerboard) */
+  .swatch {
+    width: 28px; height: 28px; padding: 0; flex: none; cursor: pointer;
+    border: 1px solid hsl(var(--input)); border-radius: calc(var(--radius) - 2px);
+    background-clip: padding-box;
+  }
+  input[type="color"].picker {
+    position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; border: none;
+  }
+  .swatch-row { display: flex; align-items: center; gap: 8px; }
+  .toggle { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+  .checkbox { width: 16px; height: 16px; accent-color: hsl(var(--primary)); }
+  hr { border: none; border-top: 1px solid hsl(var(--border)); margin: 18px 0; }
+
+  .exports { display: flex; gap: 8px; align-items: center; }
+  button.btn {
+    flex: 1; background: hsl(var(--secondary)); color: hsl(var(--secondary-foreground));
+    border: 1px solid hsl(var(--border)); border-radius: calc(var(--radius) - 2px); padding: 9px 10px;
+    font: inherit; cursor: pointer; transition: border-color .15s, background .15s;
+  }
+  button.btn:hover { border-color: hsl(var(--ring)); }
+  button.btn.primary { background: hsl(var(--primary)); border-color: hsl(var(--primary)); color: hsl(var(--primary-foreground)); font-weight: 600; }
+  .scale-sel { flex: 0 0 auto; }
+  .hint { color: hsl(var(--muted-foreground)); font-size: 11px; margin-top: 8px; }
+
+  /* ---- Stage ---- */
+  .stage {
+    display: flex; align-items: center; justify-content: center; padding: 40px; overflow: auto;
+    background:
+      linear-gradient(45deg, hsl(240 6% 9%) 25%, transparent 25%),
+      linear-gradient(-45deg, hsl(240 6% 9%) 25%, transparent 25%),
+      linear-gradient(45deg, transparent 75%, hsl(240 6% 9%) 75%),
+      linear-gradient(-45deg, transparent 75%, hsl(240 6% 9%) 75%);
+    background-size: 22px 22px;
+    background-position: 0 0, 0 11px, 11px -11px, -11px 0;
+    background-color: hsl(240 8% 6%);
+  }
+  .stage-inner { line-height: 0; }
+  svg { display: block; }
+</style>
+</head>
+<body>
+  <div class="panel">
+    <h1>Dither Shape Generator</h1>
+    <div class="sub">Ordered or organic dither inside a shape. Export crisp SVG or PNG.</div>
+
+    <div class="group">
+      <div class="title">Geometry</div>
+      <div class="row">
+        <label>Shape</label>
+        <select id="shape">
+          <option value="circle" selected>Circle</option>
+          <option value="square">Square</option>
+          <option value="rectangle">Rectangle</option>
+          <option value="triangle">Triangle</option>
+          <option value="diamond">Diamond</option>
+          <option value="pentagon">Pentagon</option>
+          <option value="hexagon">Hexagon</option>
+          <option value="star">Star</option>
+        </select>
+      </div>
+      <div class="row">
+        <label>Width</label>
+        <input type="number" id="width" min="40" max="2000" value="400" step="10">
+        <span class="unit">px</span>
+      </div>
+      <div class="row">
+        <label>Height</label>
+        <input type="number" id="height" min="40" max="2000" value="400" step="10">
+        <span class="unit">px</span>
+      </div>
+    </div>
+
+    <div class="group">
+      <div class="title">Dither</div>
+      <div class="row">
+        <label>Pattern</label>
+        <div class="seg" id="modeSeg">
+          <button data-mode="uniform" aria-pressed="false">Uniform</button>
+          <button data-mode="random" aria-pressed="true">Random</button>
+        </div>
+      </div>
+      <div class="slider-row">
+        <div class="head"><label>Density</label>
+          <span class="num"><input type="number" class="num-sm" id="density_n" min="0" max="100" value="100"><span class="unit">%</span></span>
+        </div>
+        <input type="range" id="density" min="0" max="100" value="100">
+      </div>
+      <div class="slider-row">
+        <div class="head"><label>Opacity</label>
+          <span class="num"><input type="number" class="num-sm" id="ditherOpacity_n" min="0" max="100" value="100"><span class="unit">%</span></span>
+        </div>
+        <input type="range" id="ditherOpacity" min="0" max="100" value="100">
+      </div>
+      <div class="slider-row">
+        <div class="head"><label>Dot size</label>
+          <span class="num"><input type="number" class="num-sm" id="dotSize_n" min="5" max="100" value="50"><span class="unit">%</span></span>
+        </div>
+        <input type="range" id="dotSize" min="5" max="100" value="50">
+      </div>
+      <div class="slider-row">
+        <div class="head"><label>Grid spacing</label>
+          <span class="num"><input type="number" class="num-sm" id="spacing_n" min="4" max="48" value="4"><span class="unit">px</span></span>
+        </div>
+        <input type="range" id="spacing" min="4" max="48" value="4">
+      </div>
+      <div class="row">
+        <label>Fade</label>
+        <select id="fadeDir">
+          <option value="none">None</option>
+          <option value="top">Top</option>
+          <option value="bottom">Bottom</option>
+          <option value="left">Left</option>
+          <option value="right">Right</option>
+          <option value="edges">Edges (radial)</option>
+          <option value="center" selected>Center (radial)</option>
+        </select>
+      </div>
+      <div class="slider-row">
+        <div class="head"><label>Fade amount</label>
+          <span class="num"><input type="number" class="num-sm" id="fadeAmt_n" min="0" max="100" value="100"><span class="unit">%</span></span>
+        </div>
+        <input type="range" id="fadeAmt" min="0" max="100" value="100">
+      </div>
+      <div class="slider-row">
+        <div class="head"><label>Fade curve</label>
+          <span class="num"><input type="number" class="num-sm" id="fadeCurve_n" min="0.2" max="6" value="6" step="0.1"><span class="unit">×</span></span>
+        </div>
+        <input type="range" id="fadeCurve" min="0.2" max="6" value="6" step="0.1">
+      </div>
+    </div>
+
+    <div class="group">
+      <div class="title">Colors</div>
+      <div class="row">
+        <label>Canvas</label>
+        <div class="swatch-row">
+          <button type="button" class="swatch" id="canvasColor_sw" aria-label="Canvas colour"></button>
+          <input type="text" class="hexinput" id="canvasColor_hex" placeholder="None" value="#ebf1e5">
+          <input type="color" class="picker" id="canvasColor" value="#ebf1e5">
+        </div>
+      </div>
+      <div class="row">
+        <label>Background</label>
+        <div class="swatch-row">
+          <button type="button" class="swatch" id="bgColor_sw" aria-label="Background colour"></button>
+          <input type="text" class="hexinput" id="bgColor_hex" placeholder="None" value="">
+          <input type="color" class="picker" id="bgColor" value="#ebf1e5">
+        </div>
+      </div>
+      <div class="row">
+        <label>Foreground</label>
+        <div class="swatch-row">
+          <button type="button" class="swatch" id="fgColor_sw" aria-label="Foreground colour"></button>
+          <input type="text" class="hexinput" id="fgColor_hex" placeholder="None" value="#1f2e1c">
+          <input type="color" class="picker" id="fgColor" value="#1f2e1c">
+        </div>
+      </div>
+    </div>
+
+    <div class="group">
+      <div class="title">Stroke</div>
+      <label class="toggle" style="margin-bottom:14px;">
+        <input type="checkbox" class="checkbox" id="strokeOn" checked>
+        <span>Show stroke</span>
+      </label>
+      <div class="row">
+        <label>Align</label>
+        <select id="strokeAlign">
+          <option value="center">Center</option>
+          <option value="inside">Inside</option>
+          <option value="outside" selected>Outside</option>
+        </select>
+      </div>
+      <div class="slider-row">
+        <div class="head"><label>Width</label>
+          <span class="num"><input type="number" class="num-sm" id="strokeWidth_n" min="0" max="40" value="2" step="0.5"><span class="unit">px</span></span>
+        </div>
+        <input type="range" id="strokeWidth" min="0" max="40" value="2" step="0.5">
+      </div>
+    </div>
+
+    <hr>
+
+    <div class="group">
+      <div class="title">Export</div>
+      <div class="exports">
+        <button class="btn" id="exportSvg">SVG</button>
+        <button class="btn primary" id="exportPng">PNG</button>
+        <select class="scale-sel" id="pngScale">
+          <option value="1">1×</option>
+          <option value="2" selected>2×</option>
+          <option value="4">4×</option>
+        </select>
+      </div>
+      <div class="hint">SVG keeps every dot as a vector circle — scales cleanly in Figma.</div>
+    </div>
+  </div>
+
+  <div class="stage">
+    <div class="stage-inner" id="stage"></div>
+  </div>
+
+<script>
+const SVG_NS = "http://www.w3.org/2000/svg";
+
+// 8x8 Bayer matrix — classic even ordered-dither field.
+const BAYER8 = [
+  [ 0,48,12,60, 3,51,15,63],
+  [32,16,44,28,35,19,47,31],
+  [ 8,56, 4,52,11,59, 7,55],
+  [40,24,36,20,43,27,39,23],
+  [ 2,50,14,62, 1,49,13,61],
+  [34,18,46,30,33,17,45,29],
+  [10,58, 6,54, 9,57, 5,53],
+  [42,26,38,22,41,25,37,21]
+];
+const BAYER_N = 64;
+
+// Deterministic per-cell hash → [0,1). Keeps random mode stable across renders/exports.
+function hash01(x, y, salt) {
+  let h = (x * 73856093) ^ (y * 19349663) ^ (salt * 83492791);
+  h = Math.imul(h ^ (h >>> 15), h | 1);
+  h ^= h + Math.imul(h ^ (h >>> 7), h | 61);
+  return ((h ^ (h >>> 14)) >>> 0) / 4294967296;
+}
+
+const el = id => document.getElementById(id);
+
+// ---- colours (Figma-style: empty field = transparent) ----
+const CHECKER = 'repeating-conic-gradient(#9aa0ac 0% 25%, #f5f6f8 0% 50%) 50% / 12px 12px';
+const isTransparent = v => !v || !v.trim() || v.trim().toLowerCase() === 'none';
+function normHex(v) {
+  v = (v || '').trim();
+  if (/^#?[0-9a-fA-F]{6}$/.test(v)) return (v[0] === '#' ? v : '#' + v).toLowerCase();
+  return null;
+}
+// canonical colour value for a slot: '' when transparent, else a hex string
+function colorVal(name) {
+  const v = el(name + '_hex').value;
+  return isTransparent(v) ? '' : (normHex(v) || v);
+}
+
+let mode = 'random';
+
+const inputs = {
+  shape: el('shape'),
+  width: el('width'),
+  height: el('height'),
+  density: el('density'),
+  ditherOpacity: el('ditherOpacity'),
+  dotSize: el('dotSize'),
+  spacing: el('spacing'),
+  strokeOn: el('strokeOn'),
+  strokeAlign: el('strokeAlign'),
+  strokeWidth: el('strokeWidth'),
+  fadeDir: el('fadeDir'),
+  fadeAmt: el('fadeAmt'),
+  fadeCurve: el('fadeCurve'),
+};
+
+function readState() {
+  return {
+    mode,
+    shape: inputs.shape.value,
+    width: +inputs.width.value,
+    height: +inputs.height.value,
+    density: +inputs.density.value / 100,
+    ditherOpacity: +inputs.ditherOpacity.value / 100,
+    dotSize: +inputs.dotSize.value / 100,
+    spacing: +inputs.spacing.value,
+    canvasColor: colorVal('canvasColor'),
+    bgColor: colorVal('bgColor'),
+    fgColor: colorVal('fgColor'),
+    strokeOn: inputs.strokeOn.checked,
+    strokeAlign: inputs.strokeAlign.value,
+    strokeWidth: +inputs.strokeWidth.value,
+    fadeDir: inputs.fadeDir.value,
+    fadeAmt: +inputs.fadeAmt.value / 100,
+    fadeCurve: +inputs.fadeCurve.value,
+  };
+}
+
+// Gradient weight at a normalized position (nx,ny in [-1,1], nr = radius 0..1).
+// Returns 1 at the dense end, 0 at the faded end.
+function fadeWeight(dir, nx, ny, nr) {
+  switch (dir) {
+    case 'top':    return (ny + 1) / 2;     // sparse at top
+    case 'bottom': return (1 - ny) / 2;     // sparse at bottom
+    case 'left':   return (nx + 1) / 2;     // sparse at left
+    case 'right':  return (1 - nx) / 2;     // sparse at right
+    case 'edges':  return Math.max(0, 1 - nr); // sparse at rim
+    case 'center': return Math.min(1, nr);     // sparse at center
+    default:       return 1;
+  }
+}
+
+function round(n, d) { const f = Math.pow(10, d); return Math.round(n * f) / f; }
+
+// ---- shape geometry ----
+// Normalized polygon vertices in the box [-1,1] x [-1,1]. (circle has none.)
+function regular(n) {
+  const pts = [];
+  for (let i = 0; i < n; i++) { const a = -Math.PI / 2 + i * 2 * Math.PI / n; pts.push([Math.cos(a), Math.sin(a)]); }
+  return pts;
+}
+function starPts(n, inner) {
+  const pts = [];
+  for (let i = 0; i < 2 * n; i++) { const a = -Math.PI / 2 + i * Math.PI / n; const rr = i % 2 ? inner : 1; pts.push([Math.cos(a) * rr, Math.sin(a) * rr]); }
+  return pts;
+}
+function shapePoints(shape) {
+  switch (shape) {
+    case 'triangle': return [[0, -1], [1, 1], [-1, 1]];
+    case 'square':
+    case 'rectangle': return [[-1, -1], [1, -1], [1, 1], [-1, 1]];
+    case 'diamond': return [[0, -1], [1, 0], [0, 1], [-1, 0]];
+    case 'pentagon': return regular(5);
+    case 'hexagon': return regular(6);
+    case 'star': return starPts(5, 0.42);
+    default: return null; // circle
+  }
+}
+// Fresh SVG element for the shape outline (ellipse or polygon), scaled to rx/ry.
+function shapeNode(shape, cx, cy, rx, ry, pts) {
+  if (!pts) {
+    const e = document.createElementNS(SVG_NS, 'ellipse');
+    e.setAttribute('cx', round(cx, 2)); e.setAttribute('cy', round(cy, 2));
+    e.setAttribute('rx', round(rx, 2)); e.setAttribute('ry', round(ry, 2));
+    return e;
+  }
+  const e = document.createElementNS(SVG_NS, 'polygon');
+  e.setAttribute('points', pts.map(p => `${round(cx + p[0] * rx, 2)},${round(cy + p[1] * ry, 2)}`).join(' '));
+  return e;
+}
+// Point-in-shape test in normalized space (nx,ny in box units).
+function inShape(pts, nx, ny) {
+  if (!pts) return nx * nx + ny * ny <= 1; // circle/ellipse
+  let inside = false;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    const xi = pts[i][0], yi = pts[i][1], xj = pts[j][0], yj = pts[j][1];
+    if (((yi > ny) !== (yj > ny)) && (nx < (xj - xi) * (ny - yi) / (yj - yi) + xi)) inside = !inside;
+  }
+  return inside;
+}
+
+function buildSVG(s) {
+  const sw = s.strokeOn ? s.strokeWidth : 0;
+  // outward extent of the stroke beyond the shape edge
+  const overshoot = s.strokeAlign === 'outside' ? sw : s.strokeAlign === 'center' ? sw / 2 : 0;
+  const pad = Math.ceil(overshoot) + 2;
+  const rx = s.width / 2, ry = s.height / 2;
+  const svgW = s.width + pad * 2, svgH = s.height + pad * 2;
+  const cx = svgW / 2, cy = svgH / 2;
+  const pts = shapePoints(s.shape);
+
+  const svg = document.createElementNS(SVG_NS, "svg");
+  svg.setAttribute("xmlns", SVG_NS);
+  svg.setAttribute("width", svgW);
+  svg.setAttribute("height", svgH);
+  svg.setAttribute("viewBox", `0 0 ${svgW} ${svgH}`);
+
+  const defs = document.createElementNS(SVG_NS, "defs");
+  const clip = document.createElementNS(SVG_NS, "clipPath");
+  clip.setAttribute("id", "shapeClip");
+  clip.appendChild(shapeNode(s.shape, cx, cy, rx, ry, pts));
+  defs.appendChild(clip);
+  // mask for an outside stroke: everything except the shape is visible
+  if (s.strokeOn && sw > 0 && s.strokeAlign === 'outside') {
+    const mask = document.createElementNS(SVG_NS, "mask");
+    mask.setAttribute("id", "outsideMask");
+    const wRect = document.createElementNS(SVG_NS, "rect");
+    wRect.setAttribute("x", 0); wRect.setAttribute("y", 0);
+    wRect.setAttribute("width", svgW); wRect.setAttribute("height", svgH);
+    wRect.setAttribute("fill", "#fff");
+    const bShape = shapeNode(s.shape, cx, cy, rx, ry, pts);
+    bShape.setAttribute("fill", "#000");
+    mask.appendChild(wRect); mask.appendChild(bShape);
+    defs.appendChild(mask);
+  }
+  svg.appendChild(defs);
+
+  if (s.bgColor) {
+    const bg = shapeNode(s.shape, cx, cy, rx, ry, pts);
+    bg.setAttribute("fill", s.bgColor);
+    svg.appendChild(bg);
+  }
+
+  const dotsGroup = document.createElementNS(SVG_NS, "g");
+  dotsGroup.setAttribute("clip-path", "url(#shapeClip)");
+  dotsGroup.setAttribute("fill", s.fgColor || 'none');
+  if (s.ditherOpacity < 1) dotsGroup.setAttribute("fill-opacity", round(s.ditherOpacity, 3));
+
+  const sp = s.spacing;
+  const dotR = (sp / 2) * s.dotSize;
+  const jitter = s.mode === 'random' ? sp * 0.33 : 0;
+
+  // Two interleaved lattices: the base grid fills across the whole density
+  // range; an offset grid (half a cell diagonally) only fills in the upper
+  // half, so cranking density toward 100% packs in roughly twice the dots.
+  const lattices = [
+    { ox: 0,      oy: 0,      lo: 0.0, hi: 1.0, saltT: 1, saltJ: 10 },
+    { ox: sp / 2, oy: sp / 2, lo: 0.5, hi: 1.0, saltT: 4, saltJ: 20 },
+  ];
+
+  if (s.density > 0 && dotR > 0) {
+    for (const lat of lattices) {
+      const startX = cx + lat.ox - Math.ceil((rx + sp) / sp) * sp;
+      const startY = cy + lat.oy - Math.ceil((ry + sp) / sp) * sp;
+      let gy = 0;
+      for (let y = startY; y <= cy + ry + sp; y += sp, gy++) {
+        let gx = 0;
+        for (let x = startX; x <= cx + rx + sp; x += sp, gx++) {
+          // local density after the fade gradient (normalized to the box)
+          const nx = (x - cx) / rx, ny = (y - cy) / ry, nr = Math.hypot(nx, ny);
+          const w = Math.pow(Math.max(0, Math.min(1, fadeWeight(s.fadeDir, nx, ny, nr))), s.fadeCurve);
+          const localDensity = s.density * ((1 - s.fadeAmt) + s.fadeAmt * w);
+          if (localDensity <= 0) continue;
+
+          // threshold mapped into this lattice's active band [lo, hi]
+          const base = s.mode === 'random'
+            ? hash01(gx, gy, lat.saltT)
+            : (BAYER8[gy & 7][gx & 7] + 0.5) / BAYER_N;
+          const threshold = lat.lo + (lat.hi - lat.lo) * base;
+          if (localDensity <= threshold) continue;
+
+          let px = x, py = y;
+          if (jitter) {
+            px += (hash01(gx, gy, lat.saltJ + 1) - 0.5) * jitter;
+            py += (hash01(gx, gy, lat.saltJ + 2) - 0.5) * jitter;
+          }
+          if (!inShape(pts, (px - cx) / rx, (py - cy) / ry)) continue;
+
+          const c = document.createElementNS(SVG_NS, "circle");
+          c.setAttribute("cx", round(px, 2));
+          c.setAttribute("cy", round(py, 2));
+          c.setAttribute("r", round(dotR, 2));
+          dotsGroup.appendChild(c);
+        }
+      }
+    }
+  }
+  svg.appendChild(dotsGroup);
+
+  // Unified stroke: a doubled-width outline clipped/masked so it sits inside,
+  // centered, or outside — works for circles and polygons alike.
+  if (s.strokeOn && sw > 0 && s.fgColor) {
+    const ring = shapeNode(s.shape, cx, cy, rx, ry, pts);
+    ring.setAttribute("fill", "none");
+    ring.setAttribute("stroke", s.fgColor);
+    ring.setAttribute("stroke-linejoin", "round");
+    if (s.strokeAlign === 'center') {
+      ring.setAttribute("stroke-width", sw);
+    } else {
+      ring.setAttribute("stroke-width", sw * 2);
+      ring.setAttribute(s.strokeAlign === 'inside' ? 'clip-path' : 'mask',
+                        s.strokeAlign === 'inside' ? 'url(#shapeClip)' : 'url(#outsideMask)');
+    }
+    svg.appendChild(ring);
+  }
+  return svg;
+}
+
+const stage = el('stage');
+const stageWrap = document.querySelector('.stage');
+let currentSVG = null;
+function render() {
+  const s = readState();
+  currentSVG = buildSVG(s);
+  stage.replaceChildren(currentSVG);
+  // canvas is the preview backdrop; falls back to the checkerboard when transparent
+  stageWrap.style.background = s.canvasColor || '';
+}
+
+// ---- wiring ----
+// slider <-> number pairs
+[['density','density_n'],['ditherOpacity','ditherOpacity_n'],['dotSize','dotSize_n'],
+ ['spacing','spacing_n'],['strokeWidth','strokeWidth_n'],['fadeAmt','fadeAmt_n'],
+ ['fadeCurve','fadeCurve_n']].forEach(([slider, num]) => {
+  const s = el(slider), n = el(num);
+  s.addEventListener('input', () => { n.value = s.value; render(); });
+  n.addEventListener('input', () => { s.value = n.value; render(); });
+});
+
+// swatch chip + hex field + hidden native picker per colour slot
+function updateSwatch(name) {
+  const v = el(name + '_hex').value;
+  el(name + '_sw').style.background = isTransparent(v) ? CHECKER : (normHex(v) || v);
+}
+['canvasColor', 'bgColor', 'fgColor'].forEach(name => {
+  const hexI = el(name + '_hex'), picker = el(name), sw = el(name + '_sw');
+  sw.addEventListener('click', () => picker.click());
+  picker.addEventListener('input', () => { hexI.value = picker.value; updateSwatch(name); render(); });
+  hexI.addEventListener('input', () => {
+    const n = normHex(hexI.value);
+    if (n) picker.value = n;
+    updateSwatch(name); render();
+  });
+  updateSwatch(name);
+});
+
+// plain controls
+[inputs.shape, inputs.width, inputs.height,
+ inputs.strokeOn, inputs.strokeAlign, inputs.fadeDir].forEach(i => {
+  i.addEventListener('input', render); i.addEventListener('change', render);
+});
+
+// pattern segmented control
+el('modeSeg').querySelectorAll('button').forEach(btn => {
+  btn.addEventListener('click', () => {
+    mode = btn.dataset.mode;
+    el('modeSeg').querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', b === btn));
+    render();
+  });
+});
+
+// ---- exports ----
+function svgString() {
+  return '<?xml version="1.0" encoding="UTF-8"?>\n' + new XMLSerializer().serializeToString(currentSVG.cloneNode(true));
+}
+function download(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+el('exportSvg').addEventListener('click', () => {
+  download(new Blob([svgString()], { type: 'image/svg+xml' }), `dither-${inputs.shape.value}.svg`);
+});
+el('exportPng').addEventListener('click', () => {
+  const scale = +el('pngScale').value;
+  const svgBlob = new Blob([svgString()], { type: 'image/svg+xml;charset=utf-8' });
+  const url = URL.createObjectURL(svgBlob);
+  const img = new Image();
+  img.onload = () => {
+    const w = currentSVG.viewBox.baseVal.width, h = currentSVG.viewBox.baseVal.height;
+    const canvas = document.createElement('canvas');
+    canvas.width = w * scale; canvas.height = h * scale;
+    canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+    canvas.toBlob(b => { download(b, `dither-${inputs.shape.value}@${scale}x.png`); URL.revokeObjectURL(url); }, 'image/png');
+  };
+  img.src = url;
+});
+
+render();
+</script>
+</body>
+</html>
