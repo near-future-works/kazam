@@ -36,87 +36,97 @@
     grid-template-columns: 340px 1fr;
     height: 100vh;
   }
-  /* ---- Controls panel ---- */
+  /* ---- Properties panel (Figma-style) ---- */
   .panel {
     background: hsl(var(--card));
     border-right: 1px solid hsl(var(--border));
     overflow-y: auto;
-    padding: 18px 18px 48px;
   }
-  .panel h1 { font-size: 15px; margin: 4px 0 2px; letter-spacing: .2px; }
-  .panel .sub { color: hsl(var(--muted-foreground)); font-size: 12px; margin-bottom: 18px; }
-  .group { margin-bottom: 22px; }
-  .group > .title {
-    display: block; font-size: 11px; text-transform: uppercase; letter-spacing: .6px;
-    color: hsl(var(--muted-foreground)); margin-bottom: 12px;
-  }
-  .row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
-  .row > label { color: hsl(var(--foreground)); flex: 1; }
-  .unit { color: hsl(var(--muted-foreground)); font-size: 12px; min-width: 18px; }
+  .panel-head { padding: 14px 16px 12px; }
+  .panel-head h1 { font-size: 13px; font-weight: 600; margin: 0; }
+  .panel-head .sub { color: hsl(var(--muted-foreground)); font-size: 11px; line-height: 1.4; margin-top: 4px; }
 
-  /* slider + editable number pairing */
-  .slider-row { display: block; margin-bottom: 16px; }
-  .slider-row .head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; gap: 8px; }
-  .slider-row .head label { color: hsl(var(--foreground)); }
-  .slider-row .head .num { display: flex; align-items: center; gap: 4px; }
+  .section { padding: 14px 16px; border-top: 1px solid hsl(var(--border)); }
+  .section > * { margin: 0 0 12px; }
+  .section > *:last-child { margin-bottom: 0; }
+  .sec-head { display: flex; align-items: center; justify-content: space-between; min-height: 22px; }
+  .sec-head h2 { font-size: 13px; font-weight: 600; margin: 0; }
 
-  input[type="range"] {
-    width: 100%; height: 18px; -webkit-appearance: none; appearance: none; background: transparent; cursor: pointer;
-  }
-  input[type="range"]::-webkit-slider-runnable-track {
-    height: 4px; border-radius: 999px; background: hsl(var(--secondary));
-  }
-  input[type="range"]::-webkit-slider-thumb {
-    -webkit-appearance: none; appearance: none; margin-top: -6px;
-    width: 16px; height: 16px; border-radius: 50%;
-    background: hsl(var(--primary)); border: 1px solid hsl(var(--border));
-  }
+  .flabel { display: block; font-size: 11px; color: hsl(var(--muted-foreground)); margin: 0 0 6px; }
+  .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 
-  input[type="number"], input[type="text"].hexinput {
-    width: 70px; background: hsl(var(--background)); border: 1px solid hsl(var(--input));
-    color: hsl(var(--foreground)); border-radius: calc(var(--radius) - 2px);
-    padding: 5px 7px; font: inherit; text-align: right; font-variant-numeric: tabular-nums;
+  /* compact input field with optional prefix/suffix */
+  .field {
+    position: relative; overflow: hidden;
+    display: flex; align-items: center; gap: 6px; height: 30px;
+    background: hsl(var(--secondary)); border: 1px solid transparent;
+    border-radius: calc(var(--radius) - 2px); padding: 0 8px;
   }
-  input.num-sm { width: 62px; }
-  input[type="text"].hexinput { width: 86px; text-align: left; text-transform: lowercase; }
-  input:focus { outline: none; border-color: hsl(var(--ring)); box-shadow: 0 0 0 2px hsl(var(--ring) / .25); }
+  .field:focus-within { border-color: hsl(var(--ring)); }
+  .field .pfx { color: hsl(var(--muted-foreground)); font-size: 12px; }
+  .field .sfx { color: hsl(var(--muted-foreground)); font-size: 11px; }
+  .field input {
+    flex: 1; min-width: 0; background: none; border: none; color: hsl(var(--foreground));
+    font: inherit; padding: 0; font-variant-numeric: tabular-nums;
+  }
+  .field input:focus { outline: none; }
+  /* drag-to-scrub: ew-resize cursor on hover, text caret only when editing */
+  .field.scrub input { cursor: ew-resize; }
+  .field.scrub input:focus { cursor: text; }
+  /* fill bar along the bottom shows the value's position within its range */
+  .field.scrub::after {
+    content: ""; position: absolute; left: 0; bottom: 0; height: 2px;
+    width: var(--fill, 0%); background: hsl(var(--muted-foreground) / .5);
+    pointer-events: none;
+  }
+  .field.scrubbing::after, .field:focus-within::after { background: hsl(var(--ring)); }
+  .field.scrubbing { border-color: hsl(var(--ring)); }
+  body.scrubbing, body.scrubbing * { user-select: none; cursor: ew-resize !important; }
 
   select {
-    background: hsl(var(--background)); border: 1px solid hsl(var(--input));
+    width: 100%; height: 30px; padding: 0 8px;
+    background: hsl(var(--secondary)); border: 1px solid transparent;
     color: hsl(var(--foreground)); border-radius: calc(var(--radius) - 2px);
-    padding: 6px 8px; font: inherit; cursor: pointer;
+    font: inherit; cursor: pointer;
   }
-  .seg { display: inline-flex; background: hsl(var(--secondary)); border-radius: calc(var(--radius) - 2px); padding: 2px; gap: 2px; }
-  .seg button {
-    border: none; background: transparent; color: hsl(var(--muted-foreground));
-    padding: 5px 10px; border-radius: calc(var(--radius) - 4px); cursor: pointer; font: inherit; flex: none;
-  }
-  .seg button[aria-pressed="true"] { background: hsl(var(--background)); color: hsl(var(--foreground)); }
+  select:focus { outline: none; border-color: hsl(var(--ring)); }
 
-  /* Figma-style swatch chip; empty hex field = transparent (checkerboard) */
+  /* colour rows: label · swatch · hex */
+  .color-row { display: flex; align-items: center; gap: 8px; }
+  .color-row .clabel { width: 84px; flex: none; font-size: 12px; color: hsl(var(--muted-foreground)); }
   .swatch {
-    width: 28px; height: 28px; padding: 0; flex: none; cursor: pointer;
-    border: 1px solid hsl(var(--input)); border-radius: calc(var(--radius) - 2px);
-    background-clip: padding-box;
+    width: 24px; height: 24px; flex: none; padding: 0; cursor: pointer;
+    border: 1px solid hsl(var(--input)); border-radius: 5px; background-clip: padding-box;
   }
-  input[type="color"].picker {
-    position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; border: none;
+  input[type="color"].picker { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; border: none; }
+  .hexinput {
+    flex: 1; min-width: 0; height: 30px; background: hsl(var(--secondary));
+    border: 1px solid transparent; border-radius: calc(var(--radius) - 2px);
+    color: hsl(var(--foreground)); padding: 0 8px; font: inherit; text-transform: lowercase;
   }
-  .swatch-row { display: flex; align-items: center; gap: 8px; }
-  .toggle { display: flex; align-items: center; gap: 8px; cursor: pointer; }
-  .checkbox { width: 16px; height: 16px; accent-color: hsl(var(--primary)); }
-  hr { border: none; border-top: 1px solid hsl(var(--border)); margin: 18px 0; }
+  .hexinput:focus { outline: none; border-color: hsl(var(--ring)); }
 
+  /* visibility (eye) toggle in a section header */
+  .vis {
+    position: relative; width: 24px; height: 24px; border-radius: 5px;
+    display: inline-flex; align-items: center; justify-content: center;
+    color: hsl(var(--muted-foreground)); cursor: pointer;
+  }
+  .vis:hover { background: hsl(var(--secondary)); }
+  .vis input { position: absolute; inset: 0; margin: 0; opacity: 0; cursor: pointer; }
+  .vis svg { width: 15px; height: 15px; }
+  .vis input:not(:checked) ~ svg { opacity: .35; }
+
+  /* export */
   .exports { display: flex; gap: 8px; align-items: center; }
   button.btn {
-    flex: 1; background: hsl(var(--secondary)); color: hsl(var(--secondary-foreground));
-    border: 1px solid hsl(var(--border)); border-radius: calc(var(--radius) - 2px); padding: 9px 10px;
+    flex: 1; height: 32px; background: hsl(var(--secondary)); color: hsl(var(--secondary-foreground));
+    border: 1px solid transparent; border-radius: calc(var(--radius) - 2px); padding: 0 10px;
     font: inherit; cursor: pointer; transition: border-color .15s, background .15s;
   }
   button.btn:hover { border-color: hsl(var(--ring)); }
   button.btn.primary { background: hsl(var(--primary)); border-color: hsl(var(--primary)); color: hsl(var(--primary-foreground)); font-weight: 600; }
-  .scale-sel { flex: 0 0 auto; }
-  .hint { color: hsl(var(--muted-foreground)); font-size: 11px; margin-top: 8px; }
+  .scale-sel { width: auto; flex: 0 0 auto; }
 
   /* ---- Stage ---- */
   .stage {
@@ -136,13 +146,15 @@
 </head>
 <body>
   <div class="panel">
-    <h1>Dither Shape Generator</h1>
-    <div class="sub">Ordered or organic dither inside a shape. Export crisp SVG or PNG.</div>
+    <div class="panel-head">
+      <h1>Dither Shape Generator</h1>
+      <div class="sub">Ordered or organic dither inside a shape. Export crisp SVG or PNG.</div>
+    </div>
 
-    <div class="group">
-      <div class="title">Geometry</div>
-      <div class="row">
-        <label>Shape</label>
+    <div class="section">
+      <div class="sec-head"><h2>Geometry</h2></div>
+      <div>
+        <label class="flabel">Shape</label>
         <select id="shape">
           <option value="circle" selected>Circle</option>
           <option value="square">Square</option>
@@ -154,53 +166,53 @@
           <option value="star">Star</option>
         </select>
       </div>
-      <div class="row">
-        <label>Width</label>
-        <input type="number" id="width" min="40" max="2000" value="400" step="10">
-        <span class="unit">px</span>
-      </div>
-      <div class="row">
-        <label>Height</label>
-        <input type="number" id="height" min="40" max="2000" value="400" step="10">
-        <span class="unit">px</span>
+      <div>
+        <label class="flabel">Dimensions</label>
+        <div class="pair">
+          <div class="field"><span class="pfx">W</span><input type="number" id="width" min="40" max="2000" value="400" step="10"></div>
+          <div class="field"><span class="pfx">H</span><input type="number" id="height" min="40" max="2000" value="400" step="10"></div>
+        </div>
       </div>
     </div>
 
-    <div class="group">
-      <div class="title">Dither</div>
-      <div class="row">
-        <label>Pattern</label>
-        <div class="seg" id="modeSeg">
-          <button data-mode="uniform" aria-pressed="false">Uniform</button>
-          <button data-mode="random" aria-pressed="true">Random</button>
+    <div class="section">
+      <div class="sec-head"><h2>Dither</h2></div>
+      <div class="pair">
+        <div>
+          <label class="flabel">Pattern</label>
+          <select id="pattern">
+            <option value="ordered">Ordered</option>
+            <option value="noise" selected>Noise</option>
+            <option value="halftone">Halftone</option>
+          </select>
+        </div>
+        <div>
+          <label class="flabel">Jitter</label>
+          <div class="field"><input type="number" id="jitter" min="0" max="100" value="50"><span class="sfx">%</span></div>
         </div>
       </div>
-      <div class="slider-row">
-        <div class="head"><label>Density</label>
-          <span class="num"><input type="number" class="num-sm" id="density_n" min="0" max="100" value="100"><span class="unit">%</span></span>
+      <div class="pair">
+        <div>
+          <label class="flabel">Density</label>
+          <div class="field"><input type="number" id="density" min="0" max="100" value="100"><span class="sfx">%</span></div>
         </div>
-        <input type="range" id="density" min="0" max="100" value="100">
-      </div>
-      <div class="slider-row">
-        <div class="head"><label>Opacity</label>
-          <span class="num"><input type="number" class="num-sm" id="ditherOpacity_n" min="0" max="100" value="100"><span class="unit">%</span></span>
+        <div>
+          <label class="flabel">Opacity</label>
+          <div class="field"><input type="number" id="ditherOpacity" min="0" max="100" value="100"><span class="sfx">%</span></div>
         </div>
-        <input type="range" id="ditherOpacity" min="0" max="100" value="100">
       </div>
-      <div class="slider-row">
-        <div class="head"><label>Dot size</label>
-          <span class="num"><input type="number" class="num-sm" id="dotSize_n" min="5" max="100" value="50"><span class="unit">%</span></span>
+      <div class="pair">
+        <div>
+          <label class="flabel">Dot size</label>
+          <div class="field"><input type="number" id="dotSize" min="5" max="100" value="50"><span class="sfx">%</span></div>
         </div>
-        <input type="range" id="dotSize" min="5" max="100" value="50">
-      </div>
-      <div class="slider-row">
-        <div class="head"><label>Grid spacing</label>
-          <span class="num"><input type="number" class="num-sm" id="spacing_n" min="4" max="48" value="4"><span class="unit">px</span></span>
+        <div>
+          <label class="flabel">Spacing</label>
+          <div class="field"><input type="number" id="spacing" min="4" max="48" value="4"><span class="sfx">px</span></div>
         </div>
-        <input type="range" id="spacing" min="4" max="48" value="4">
       </div>
-      <div class="row">
-        <label>Fade</label>
+      <div>
+        <label class="flabel">Fade</label>
         <select id="fadeDir">
           <option value="none">None</option>
           <option value="top">Top</option>
@@ -211,74 +223,66 @@
           <option value="center" selected>Center (radial)</option>
         </select>
       </div>
-      <div class="slider-row">
-        <div class="head"><label>Fade amount</label>
-          <span class="num"><input type="number" class="num-sm" id="fadeAmt_n" min="0" max="100" value="100"><span class="unit">%</span></span>
+      <div class="pair">
+        <div>
+          <label class="flabel">Amount</label>
+          <div class="field"><input type="number" id="fadeAmt" min="0" max="100" value="100"><span class="sfx">%</span></div>
         </div>
-        <input type="range" id="fadeAmt" min="0" max="100" value="100">
-      </div>
-      <div class="slider-row">
-        <div class="head"><label>Fade curve</label>
-          <span class="num"><input type="number" class="num-sm" id="fadeCurve_n" min="0.2" max="6" value="6" step="0.1"><span class="unit">×</span></span>
-        </div>
-        <input type="range" id="fadeCurve" min="0.2" max="6" value="6" step="0.1">
-      </div>
-    </div>
-
-    <div class="group">
-      <div class="title">Colors</div>
-      <div class="row">
-        <label>Canvas</label>
-        <div class="swatch-row">
-          <button type="button" class="swatch" id="canvasColor_sw" aria-label="Canvas colour"></button>
-          <input type="text" class="hexinput" id="canvasColor_hex" placeholder="None" value="#ebf1e5">
-          <input type="color" class="picker" id="canvasColor" value="#ebf1e5">
-        </div>
-      </div>
-      <div class="row">
-        <label>Background</label>
-        <div class="swatch-row">
-          <button type="button" class="swatch" id="bgColor_sw" aria-label="Background colour"></button>
-          <input type="text" class="hexinput" id="bgColor_hex" placeholder="None" value="">
-          <input type="color" class="picker" id="bgColor" value="#ebf1e5">
-        </div>
-      </div>
-      <div class="row">
-        <label>Foreground</label>
-        <div class="swatch-row">
-          <button type="button" class="swatch" id="fgColor_sw" aria-label="Foreground colour"></button>
-          <input type="text" class="hexinput" id="fgColor_hex" placeholder="None" value="#1f2e1c">
-          <input type="color" class="picker" id="fgColor" value="#1f2e1c">
+        <div>
+          <label class="flabel">Curve</label>
+          <div class="field"><input type="number" id="fadeCurve" min="0.2" max="6" value="6" step="0.1"><span class="sfx">×</span></div>
         </div>
       </div>
     </div>
 
-    <div class="group">
-      <div class="title">Stroke</div>
-      <label class="toggle" style="margin-bottom:14px;">
-        <input type="checkbox" class="checkbox" id="strokeOn" checked>
-        <span>Show stroke</span>
-      </label>
-      <div class="row">
-        <label>Align</label>
-        <select id="strokeAlign">
-          <option value="center">Center</option>
-          <option value="inside">Inside</option>
-          <option value="outside" selected>Outside</option>
-        </select>
+    <div class="section">
+      <div class="sec-head"><h2>Colours</h2></div>
+      <div class="color-row">
+        <span class="clabel">Canvas</span>
+        <button type="button" class="swatch" id="canvasColor_sw" aria-label="Canvas colour"></button>
+        <input type="text" class="hexinput" id="canvasColor_hex" placeholder="None" value="#ebf1e5">
+        <input type="color" class="picker" id="canvasColor" value="#ebf1e5">
       </div>
-      <div class="slider-row">
-        <div class="head"><label>Width</label>
-          <span class="num"><input type="number" class="num-sm" id="strokeWidth_n" min="0" max="40" value="2" step="0.5"><span class="unit">px</span></span>
-        </div>
-        <input type="range" id="strokeWidth" min="0" max="40" value="2" step="0.5">
+      <div class="color-row">
+        <span class="clabel">Background</span>
+        <button type="button" class="swatch" id="bgColor_sw" aria-label="Background colour"></button>
+        <input type="text" class="hexinput" id="bgColor_hex" placeholder="None" value="">
+        <input type="color" class="picker" id="bgColor" value="#ebf1e5">
+      </div>
+      <div class="color-row">
+        <span class="clabel">Foreground</span>
+        <button type="button" class="swatch" id="fgColor_sw" aria-label="Foreground colour"></button>
+        <input type="text" class="hexinput" id="fgColor_hex" placeholder="None" value="#1f2e1c">
+        <input type="color" class="picker" id="fgColor" value="#1f2e1c">
       </div>
     </div>
 
-    <hr>
+    <div class="section">
+      <div class="sec-head">
+        <h2>Stroke</h2>
+        <label class="vis" title="Toggle stroke">
+          <input type="checkbox" id="strokeOn" checked>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg>
+        </label>
+      </div>
+      <div class="pair">
+        <div>
+          <label class="flabel">Align</label>
+          <select id="strokeAlign">
+            <option value="center">Center</option>
+            <option value="inside">Inside</option>
+            <option value="outside" selected>Outside</option>
+          </select>
+        </div>
+        <div>
+          <label class="flabel">Width</label>
+          <div class="field"><input type="number" id="strokeWidth" min="0" max="40" value="2" step="0.5"><span class="sfx">px</span></div>
+        </div>
+      </div>
+    </div>
 
-    <div class="group">
-      <div class="title">Export</div>
+    <div class="section">
+      <div class="sec-head"><h2>Export</h2></div>
       <div class="exports">
         <button class="btn" id="exportSvg">SVG</button>
         <button class="btn primary" id="exportPng">PNG</button>
@@ -288,7 +292,6 @@
           <option value="4">4×</option>
         </select>
       </div>
-      <div class="hint">SVG keeps every dot as a vector circle — scales cleanly in Figma.</div>
     </div>
   </div>
 
@@ -336,12 +339,12 @@ function colorVal(name) {
   return isTransparent(v) ? '' : (normHex(v) || v);
 }
 
-let mode = 'random';
-
 const inputs = {
   shape: el('shape'),
   width: el('width'),
   height: el('height'),
+  pattern: el('pattern'),
+  jitter: el('jitter'),
   density: el('density'),
   ditherOpacity: el('ditherOpacity'),
   dotSize: el('dotSize'),
@@ -356,10 +359,11 @@ const inputs = {
 
 function readState() {
   return {
-    mode,
     shape: inputs.shape.value,
     width: +inputs.width.value,
     height: +inputs.height.value,
+    pattern: inputs.pattern.value,
+    jitter: +inputs.jitter.value / 100,
     density: +inputs.density.value / 100,
     ditherOpacity: +inputs.ditherOpacity.value / 100,
     dotSize: +inputs.dotSize.value / 100,
@@ -488,15 +492,19 @@ function buildSVG(s) {
 
   const sp = s.spacing;
   const dotR = (sp / 2) * s.dotSize;
-  const jitter = s.mode === 'random' ? sp * 0.33 : 0;
+  const jitterPx = sp * 0.6 * s.jitter;            // positional scatter, independent of pattern
+  const halftoneMax = sp * 0.5 * (0.55 + s.dotSize); // dot radius at full local density (halftone)
 
-  // Two interleaved lattices: the base grid fills across the whole density
-  // range; an offset grid (half a cell diagonally) only fills in the upper
-  // half, so cranking density toward 100% packs in roughly twice the dots.
-  const lattices = [
-    { ox: 0,      oy: 0,      lo: 0.0, hi: 1.0, saltT: 1, saltJ: 10 },
-    { ox: sp / 2, oy: sp / 2, lo: 0.5, hi: 1.0, saltT: 4, saltJ: 20 },
-  ];
+  // Pattern decides how each cell's presence (or size, for halftone) is chosen:
+  //  - ordered:  even Bayer threshold
+  //  - noise:    per-cell random threshold
+  //  - halftone: every cell present, dot radius scales with local density
+  // Ordered/noise also use a second interleaved lattice so density can push
+  // toward a near-solid fill; halftone grows the dots instead.
+  const lattices = s.pattern === 'halftone'
+    ? [{ ox: 0, oy: 0, lo: 0.0, hi: 1.0, saltT: 1, saltJ: 10 }]
+    : [{ ox: 0, oy: 0, lo: 0.0, hi: 1.0, saltT: 1, saltJ: 10 },
+       { ox: sp / 2, oy: sp / 2, lo: 0.5, hi: 1.0, saltT: 4, saltJ: 20 }];
 
   if (s.density > 0 && dotR > 0) {
     for (const lat of lattices) {
@@ -512,24 +520,30 @@ function buildSVG(s) {
           const localDensity = s.density * ((1 - s.fadeAmt) + s.fadeAmt * w);
           if (localDensity <= 0) continue;
 
-          // threshold mapped into this lattice's active band [lo, hi]
-          const base = s.mode === 'random'
-            ? hash01(gx, gy, lat.saltT)
-            : (BAYER8[gy & 7][gx & 7] + 0.5) / BAYER_N;
-          const threshold = lat.lo + (lat.hi - lat.lo) * base;
-          if (localDensity <= threshold) continue;
+          let radius;
+          if (s.pattern === 'halftone') {
+            radius = halftoneMax * Math.sqrt(Math.min(1, localDensity));
+            if (radius < 0.15) continue;
+          } else {
+            const base = s.pattern === 'noise'
+              ? hash01(gx, gy, lat.saltT)
+              : (BAYER8[gy & 7][gx & 7] + 0.5) / BAYER_N;
+            const threshold = lat.lo + (lat.hi - lat.lo) * base;
+            if (localDensity <= threshold) continue;
+            radius = dotR;
+          }
 
           let px = x, py = y;
-          if (jitter) {
-            px += (hash01(gx, gy, lat.saltJ + 1) - 0.5) * jitter;
-            py += (hash01(gx, gy, lat.saltJ + 2) - 0.5) * jitter;
+          if (jitterPx) {
+            px += (hash01(gx, gy, lat.saltJ + 1) - 0.5) * jitterPx;
+            py += (hash01(gx, gy, lat.saltJ + 2) - 0.5) * jitterPx;
           }
           if (!inShape(pts, (px - cx) / rx, (py - cy) / ry)) continue;
 
           const c = document.createElementNS(SVG_NS, "circle");
           c.setAttribute("cx", round(px, 2));
           c.setAttribute("cy", round(py, 2));
-          c.setAttribute("r", round(dotR, 2));
+          c.setAttribute("r", round(radius, 2));
           dotsGroup.appendChild(c);
         }
       }
@@ -568,15 +582,6 @@ function render() {
 }
 
 // ---- wiring ----
-// slider <-> number pairs
-[['density','density_n'],['ditherOpacity','ditherOpacity_n'],['dotSize','dotSize_n'],
- ['spacing','spacing_n'],['strokeWidth','strokeWidth_n'],['fadeAmt','fadeAmt_n'],
- ['fadeCurve','fadeCurve_n']].forEach(([slider, num]) => {
-  const s = el(slider), n = el(num);
-  s.addEventListener('input', () => { n.value = s.value; render(); });
-  n.addEventListener('input', () => { s.value = n.value; render(); });
-});
-
 // swatch chip + hex field + hidden native picker per colour slot
 function updateSwatch(name) {
   const v = el(name + '_hex').value;
@@ -594,18 +599,57 @@ function updateSwatch(name) {
   updateSwatch(name);
 });
 
-// plain controls
-[inputs.shape, inputs.width, inputs.height,
- inputs.strokeOn, inputs.strokeAlign, inputs.fadeDir].forEach(i => {
-  i.addEventListener('input', render); i.addEventListener('change', render);
+// every control re-renders on input/change (numbers, selects, checkbox)
+Object.values(inputs).forEach(i => {
+  i.addEventListener('input', render);
+  i.addEventListener('change', render);
 });
 
-// pattern segmented control
-el('modeSeg').querySelectorAll('button').forEach(btn => {
-  btn.addEventListener('click', () => {
-    mode = btn.dataset.mode;
-    el('modeSeg').querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', b === btn));
-    render();
+// ---- drag-to-scrub number fields (Figma-style) ----
+function updateFill(input) {
+  const min = +input.min, max = +input.max;
+  if (!isFinite(min) || !isFinite(max) || max <= min) return;
+  const pct = Math.max(0, Math.min(100, (+input.value - min) / (max - min) * 100));
+  input.closest('.field').style.setProperty('--fill', pct + '%');
+}
+document.querySelectorAll('.field input[type="number"]').forEach(input => {
+  const field = input.closest('.field');
+  field.classList.add('scrub');
+  updateFill(input);
+  input.addEventListener('input', () => updateFill(input));
+
+  field.addEventListener('pointerdown', e => {
+    if (e.button !== 0) return;
+    const min = +input.min, max = +input.max, step = +input.step || 1;
+    if (!isFinite(min) || !isFinite(max)) return;
+    const startX = e.clientX, startVal = +input.value || 0;
+    const pxStep = (max - min) / 260;                 // ~260px sweeps the full range
+    const dec = (String(step).split('.')[1] || '').length;
+    let scrubbing = false;
+
+    const move = ev => {
+      const dx = ev.clientX - startX;
+      if (!scrubbing) {
+        if (Math.abs(dx) < 3) return;                 // a plain click still focuses for typing
+        scrubbing = true;
+        field.classList.add('scrubbing');
+        document.body.classList.add('scrubbing');
+        input.blur();
+      }
+      ev.preventDefault();
+      let v = Math.round((startVal + dx * pxStep) / step) * step;
+      v = Math.max(min, Math.min(max, v));
+      input.value = dec ? v.toFixed(dec) : v;
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    };
+    const up = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      field.classList.remove('scrubbing');
+      document.body.classList.remove('scrubbing');
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
   });
 });
 
