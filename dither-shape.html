@@ -64,7 +64,7 @@
   }
   .field:focus-within { border-color: hsl(var(--ring)); }
   .field .pfx { color: hsl(var(--muted-foreground)); font-size: 12px; }
-  .field .sfx { color: hsl(var(--muted-foreground)); font-size: 11px; }
+  .field .sfx, .cfield .sfx { color: hsl(var(--muted-foreground)); font-size: 11px; }
   .field input {
     flex: 1; min-width: 0; background: none; border: none; color: hsl(var(--foreground));
     font: inherit; padding: 0; font-variant-numeric: tabular-nums;
@@ -84,27 +84,72 @@
   body.scrubbing, body.scrubbing * { user-select: none; cursor: ew-resize !important; }
 
   select {
-    width: 100%; height: 30px; padding: 0 8px;
-    background: hsl(var(--secondary)); border: 1px solid transparent;
+    width: 100%; height: 30px; padding: 0 26px 0 8px;
+    appearance: none; -webkit-appearance: none; -moz-appearance: none;
+    background-color: hsl(var(--secondary));
+    /* custom caret matches the muted % suffix colour + 8px right spacing */
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none' stroke='%23a1a1aa' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 4.5 6 7.5 9 4.5'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 8px center;
+    border: 1px solid transparent;
     color: hsl(var(--foreground)); border-radius: calc(var(--radius) - 2px);
     font: inherit; cursor: pointer;
   }
   select:focus { outline: none; border-color: hsl(var(--ring)); }
 
-  /* colour rows: label · swatch · hex */
+  /* colour rows: label · [swatch · hex | opacity] as one coherent field */
   .color-row { display: flex; align-items: center; gap: 8px; }
   .color-row .clabel { width: 84px; flex: none; font-size: 12px; color: hsl(var(--muted-foreground)); }
+  .cfield {
+    position: relative; overflow: hidden; flex: 1; min-width: 0; height: 30px;
+    display: flex; align-items: center; padding: 0 0 0 5px;
+    background: hsl(var(--secondary)); border: 1px solid transparent; border-radius: calc(var(--radius) - 2px);
+  }
+  .cfield:focus-within { border-color: hsl(var(--ring)); }
   .swatch {
-    width: 24px; height: 24px; flex: none; padding: 0; cursor: pointer;
-    border: 1px solid hsl(var(--input)); border-radius: 5px; background-clip: padding-box;
+    width: 18px; height: 18px; flex: none; margin-right: 7px; padding: 0; cursor: pointer;
+    border: 1px solid hsl(var(--input)); border-radius: 4px; background-clip: padding-box;
   }
+  .cfield .hex {
+    flex: 1; min-width: 0; background: none; border: none; color: hsl(var(--foreground));
+    font: inherit; padding: 0 8px 0 0; text-transform: lowercase;
+  }
+  /* full-height seam in the panel background colour: reads as two abutting fields */
+  .cfield .divline { width: 1px; align-self: stretch; flex: none; background: hsl(var(--background)); }
+  /* opacity is its own cell butting the seam: number left, % right, slider full width */
+  .opwrap { position: relative; align-self: stretch; flex: none; width: 64px; display: flex; align-items: center; padding: 0 8px; }
+  .opwrap::after {
+    content: ""; position: absolute; left: 0; bottom: 0; height: 2px;
+    width: var(--fill, 100%); background: hsl(var(--muted-foreground) / .5); pointer-events: none;
+  }
+  .opwrap.scrubbing::after, .cfield:focus-within .opwrap::after { background: hsl(var(--ring)); }
+  .opwrap .opac { cursor: ew-resize; }
+  .opwrap .opac:focus { cursor: text; }
+  .cfield .opac {
+    flex: 1; min-width: 0; background: none; border: none; color: hsl(var(--foreground));
+    font: inherit; padding: 0; text-align: left; font-variant-numeric: tabular-nums;
+  }
+  /* hide native number spinners everywhere for a clean, compact look */
+  input[type="number"] { appearance: textfield; -moz-appearance: textfield; }
+  input[type="number"]::-webkit-outer-spin-button,
+  input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+  .cfield .hex:focus, .cfield .opac:focus { outline: none; }
   input[type="color"].picker { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; border: none; }
-  .hexinput {
-    flex: 1; min-width: 0; height: 30px; background: hsl(var(--secondary));
-    border: 1px solid transparent; border-radius: calc(var(--radius) - 2px);
-    color: hsl(var(--foreground)); padding: 0 8px; font: inherit; text-transform: lowercase;
+
+  /* "Add background" affordance + per-fill remove button */
+  .add-row {
+    display: flex; align-items: center; gap: 7px; width: 100%; height: 30px; padding: 0 10px;
+    background: none; border: 1px dashed hsl(var(--border)); border-radius: calc(var(--radius) - 2px);
+    color: hsl(var(--muted-foreground)); font: inherit; cursor: pointer; text-align: left;
   }
-  .hexinput:focus { outline: none; border-color: hsl(var(--ring)); }
+  .add-row:hover { border-color: hsl(var(--ring)); color: hsl(var(--foreground)); }
+  .add-row .plus { font-size: 15px; line-height: 1; }
+  .rm {
+    width: 22px; height: 22px; flex: none; display: inline-flex; align-items: center; justify-content: center;
+    background: none; border: none; border-radius: 4px; color: hsl(var(--muted-foreground));
+    font-size: 16px; cursor: pointer;
+  }
+  .rm:hover { background: hsl(var(--secondary)); color: hsl(var(--foreground)); }
 
   /* visibility (eye) toggle in a section header */
   .vis {
@@ -130,6 +175,7 @@
 
   /* ---- Stage ---- */
   .stage {
+    position: relative;
     display: flex; align-items: center; justify-content: center; padding: 40px; overflow: auto;
     background:
       linear-gradient(45deg, hsl(240 6% 9%) 25%, transparent 25%),
@@ -140,7 +186,8 @@
     background-position: 0 0, 0 11px, 11px -11px, -11px 0;
     background-color: hsl(240 8% 6%);
   }
-  .stage-inner { line-height: 0; }
+  .stage-fill { position: absolute; inset: 0; z-index: 0; pointer-events: none; }
+  .stage-inner { position: relative; z-index: 1; line-height: 0; }
   svg { display: block; }
 </style>
 </head>
@@ -148,7 +195,7 @@
   <div class="panel">
     <div class="panel-head">
       <h1>Dither Shape Generator</h1>
-      <div class="sub">Ordered or organic dither inside a shape. Export crisp SVG or PNG.</div>
+      <div class="sub">Ordered or organic dither inside a shape. Export crisp SVG or PNG to use in slides, diagrams and visualisations.</div>
     </div>
 
     <div class="section">
@@ -169,8 +216,8 @@
       <div>
         <label class="flabel">Dimensions</label>
         <div class="pair">
-          <div class="field"><span class="pfx">W</span><input type="number" id="width" min="40" max="2000" value="400" step="10"></div>
-          <div class="field"><span class="pfx">H</span><input type="number" id="height" min="40" max="2000" value="400" step="10"></div>
+          <div class="field"><span class="pfx">W</span><input type="number" id="width" min="40" max="2000" value="400" step="10"><span class="sfx">px</span></div>
+          <div class="field"><span class="pfx">H</span><input type="number" id="height" min="40" max="2000" value="400" step="10"><span class="sfx">px</span></div>
         </div>
       </div>
     </div>
@@ -197,31 +244,27 @@
           <div class="field"><input type="number" id="density" min="0" max="100" value="100"><span class="sfx">%</span></div>
         </div>
         <div>
-          <label class="flabel">Opacity</label>
-          <div class="field"><input type="number" id="ditherOpacity" min="0" max="100" value="100"><span class="sfx">%</span></div>
+          <label class="flabel">Dot size</label>
+          <div class="field"><input type="number" id="dotSize" min="5" max="100" value="50"><span class="sfx">%</span></div>
         </div>
       </div>
       <div class="pair">
         <div>
-          <label class="flabel">Dot size</label>
-          <div class="field"><input type="number" id="dotSize" min="5" max="100" value="50"><span class="sfx">%</span></div>
-        </div>
-        <div>
           <label class="flabel">Spacing</label>
           <div class="field"><input type="number" id="spacing" min="4" max="48" value="4"><span class="sfx">px</span></div>
         </div>
-      </div>
-      <div>
-        <label class="flabel">Fade</label>
-        <select id="fadeDir">
-          <option value="none">None</option>
-          <option value="top">Top</option>
-          <option value="bottom">Bottom</option>
-          <option value="left">Left</option>
-          <option value="right">Right</option>
-          <option value="edges">Edges (radial)</option>
-          <option value="center" selected>Center (radial)</option>
-        </select>
+        <div>
+          <label class="flabel">Fade</label>
+          <select id="fadeDir">
+            <option value="none">None</option>
+            <option value="top">Top</option>
+            <option value="bottom">Bottom</option>
+            <option value="left">Left</option>
+            <option value="right">Right</option>
+            <option value="edges">Edges (radial)</option>
+            <option value="center" selected>Center (radial)</option>
+          </select>
+        </div>
       </div>
       <div class="pair">
         <div>
@@ -239,22 +282,45 @@
       <div class="sec-head"><h2>Colours</h2></div>
       <div class="color-row">
         <span class="clabel">Canvas</span>
-        <button type="button" class="swatch" id="canvasColor_sw" aria-label="Canvas colour"></button>
-        <input type="text" class="hexinput" id="canvasColor_hex" placeholder="None" value="#ebf1e5">
-        <input type="color" class="picker" id="canvasColor" value="#ebf1e5">
-      </div>
-      <div class="color-row">
-        <span class="clabel">Background</span>
-        <button type="button" class="swatch" id="bgColor_sw" aria-label="Background colour"></button>
-        <input type="text" class="hexinput" id="bgColor_hex" placeholder="None" value="">
-        <input type="color" class="picker" id="bgColor" value="#ebf1e5">
+        <div class="cfield">
+          <button type="button" class="swatch" id="canvasColor_sw" aria-label="Canvas colour"></button>
+          <input type="text" class="hex" id="canvasColor_hex" placeholder="None" value="#ebf1e5">
+          <span class="divline"></span>
+          <span class="opwrap">
+            <input type="number" class="opac" id="canvasColor_op" min="0" max="100" value="100">
+            <span class="sfx">%</span>
+          </span>
+          <input type="color" class="picker" id="canvasColor" value="#ebf1e5">
+        </div>
       </div>
       <div class="color-row">
         <span class="clabel">Foreground</span>
-        <button type="button" class="swatch" id="fgColor_sw" aria-label="Foreground colour"></button>
-        <input type="text" class="hexinput" id="fgColor_hex" placeholder="None" value="#1f2e1c">
-        <input type="color" class="picker" id="fgColor" value="#1f2e1c">
+        <div class="cfield">
+          <button type="button" class="swatch" id="fgColor_sw" aria-label="Foreground colour"></button>
+          <input type="text" class="hex" id="fgColor_hex" placeholder="None" value="#1f2e1c">
+          <span class="divline"></span>
+          <span class="opwrap">
+            <input type="number" class="opac" id="fgColor_op" min="0" max="100" value="100">
+            <span class="sfx">%</span>
+          </span>
+          <input type="color" class="picker" id="fgColor" value="#1f2e1c">
+        </div>
       </div>
+      <div class="color-row" id="bgRow">
+        <span class="clabel">Background</span>
+        <div class="cfield">
+          <button type="button" class="swatch" id="bgColor_sw" aria-label="Background colour"></button>
+          <input type="text" class="hex" id="bgColor_hex" placeholder="None" value="">
+          <span class="divline"></span>
+          <span class="opwrap">
+            <input type="number" class="opac" id="bgColor_op" min="0" max="100" value="100">
+            <span class="sfx">%</span>
+          </span>
+          <input type="color" class="picker" id="bgColor" value="#ffffff">
+        </div>
+        <button type="button" class="rm" id="removeBg" title="Remove background" aria-label="Remove background">−</button>
+      </div>
+      <button type="button" class="add-row" id="addBg"><span class="plus">+</span>Add background</button>
     </div>
 
     <div class="section">
@@ -296,6 +362,7 @@
   </div>
 
   <div class="stage">
+    <div class="stage-fill" id="stageFill"></div>
     <div class="stage-inner" id="stage"></div>
   </div>
 
@@ -338,6 +405,17 @@ function colorVal(name) {
   const v = el(name + '_hex').value;
   return isTransparent(v) ? '' : (normHex(v) || v);
 }
+// per-slot opacity 0..1 (from the field's % input)
+function opacityVal(name) {
+  const v = +el(name + '_op').value;
+  return isFinite(v) ? Math.max(0, Math.min(1, v / 100)) : 1;
+}
+function hexToRgba(hex, a) {
+  const h = normHex(hex);
+  if (!h) return hex;
+  const n = parseInt(h.slice(1), 16);
+  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${Math.round(a * 1000) / 1000})`;
+}
 
 const inputs = {
   shape: el('shape'),
@@ -346,7 +424,6 @@ const inputs = {
   pattern: el('pattern'),
   jitter: el('jitter'),
   density: el('density'),
-  ditherOpacity: el('ditherOpacity'),
   dotSize: el('dotSize'),
   spacing: el('spacing'),
   strokeOn: el('strokeOn'),
@@ -365,12 +442,14 @@ function readState() {
     pattern: inputs.pattern.value,
     jitter: +inputs.jitter.value / 100,
     density: +inputs.density.value / 100,
-    ditherOpacity: +inputs.ditherOpacity.value / 100,
     dotSize: +inputs.dotSize.value / 100,
     spacing: +inputs.spacing.value,
     canvasColor: colorVal('canvasColor'),
+    canvasOpacity: opacityVal('canvasColor'),
     bgColor: colorVal('bgColor'),
+    bgOpacity: opacityVal('bgColor'),
     fgColor: colorVal('fgColor'),
+    fgOpacity: opacityVal('fgColor'),
     strokeOn: inputs.strokeOn.checked,
     strokeAlign: inputs.strokeAlign.value,
     strokeWidth: +inputs.strokeWidth.value,
@@ -482,13 +561,14 @@ function buildSVG(s) {
   if (s.bgColor) {
     const bg = shapeNode(s.shape, cx, cy, rx, ry, pts);
     bg.setAttribute("fill", s.bgColor);
+    if (s.bgOpacity < 1) bg.setAttribute("fill-opacity", round(s.bgOpacity, 3));
     svg.appendChild(bg);
   }
 
   const dotsGroup = document.createElementNS(SVG_NS, "g");
   dotsGroup.setAttribute("clip-path", "url(#shapeClip)");
   dotsGroup.setAttribute("fill", s.fgColor || 'none');
-  if (s.ditherOpacity < 1) dotsGroup.setAttribute("fill-opacity", round(s.ditherOpacity, 3));
+  if (s.fgOpacity < 1) dotsGroup.setAttribute("fill-opacity", round(s.fgOpacity, 3));
 
   const sp = s.spacing;
   const dotR = (sp / 2) * s.dotSize;
@@ -557,6 +637,7 @@ function buildSVG(s) {
     const ring = shapeNode(s.shape, cx, cy, rx, ry, pts);
     ring.setAttribute("fill", "none");
     ring.setAttribute("stroke", s.fgColor);
+    if (s.fgOpacity < 1) ring.setAttribute("stroke-opacity", round(s.fgOpacity, 3));
     ring.setAttribute("stroke-linejoin", "round");
     if (s.strokeAlign === 'center') {
       ring.setAttribute("stroke-width", sw);
@@ -571,14 +652,14 @@ function buildSVG(s) {
 }
 
 const stage = el('stage');
-const stageWrap = document.querySelector('.stage');
+const stageFill = el('stageFill');
 let currentSVG = null;
 function render() {
   const s = readState();
   currentSVG = buildSVG(s);
   stage.replaceChildren(currentSVG);
-  // canvas is the preview backdrop; falls back to the checkerboard when transparent
-  stageWrap.style.background = s.canvasColor || '';
+  // canvas fill layer over the checkerboard; empty/low opacity reveals transparency
+  stageFill.style.background = s.canvasColor ? hexToRgba(s.canvasColor, s.canvasOpacity) : 'transparent';
 }
 
 // ---- wiring ----
@@ -588,7 +669,7 @@ function updateSwatch(name) {
   el(name + '_sw').style.background = isTransparent(v) ? CHECKER : (normHex(v) || v);
 }
 ['canvasColor', 'bgColor', 'fgColor'].forEach(name => {
-  const hexI = el(name + '_hex'), picker = el(name), sw = el(name + '_sw');
+  const hexI = el(name + '_hex'), picker = el(name), sw = el(name + '_sw'), opI = el(name + '_op');
   sw.addEventListener('click', () => picker.click());
   picker.addEventListener('input', () => { hexI.value = picker.value; updateSwatch(name); render(); });
   hexI.addEventListener('input', () => {
@@ -596,8 +677,30 @@ function updateSwatch(name) {
     if (n) picker.value = n;
     updateSwatch(name); render();
   });
+  opI.addEventListener('input', render);
   updateSwatch(name);
 });
+
+// Background is optional: show "Add background" until one exists, with a remove button.
+const bgRow = el('bgRow'), addBg = el('addBg');
+function updateBgState() {
+  const present = !isTransparent(el('bgColor_hex').value);
+  bgRow.style.display = present ? 'flex' : 'none';
+  addBg.style.display = present ? 'none' : 'flex';
+}
+addBg.addEventListener('click', () => {
+  el('bgColor_hex').value = el('bgColor').value || '#ffffff';
+  updateSwatch('bgColor');
+  updateBgState();
+  render();
+});
+el('removeBg').addEventListener('click', () => {
+  el('bgColor_hex').value = '';
+  updateSwatch('bgColor');
+  updateBgState();
+  render();
+});
+updateBgState();
 
 // every control re-renders on input/change (numbers, selects, checkbox)
 Object.values(inputs).forEach(i => {
@@ -606,19 +709,18 @@ Object.values(inputs).forEach(i => {
 });
 
 // ---- drag-to-scrub number fields (Figma-style) ----
-function updateFill(input) {
-  const min = +input.min, max = +input.max;
-  if (!isFinite(min) || !isFinite(max) || max <= min) return;
-  const pct = Math.max(0, Math.min(100, (+input.value - min) / (max - min) * 100));
-  input.closest('.field').style.setProperty('--fill', pct + '%');
-}
-document.querySelectorAll('.field input[type="number"]').forEach(input => {
-  const field = input.closest('.field');
-  field.classList.add('scrub');
-  updateFill(input);
-  input.addEventListener('input', () => updateFill(input));
+// input = the number input; container holds the --fill bar; handle receives the drag.
+function attachScrub(input, container, handle) {
+  const setFill = () => {
+    const min = +input.min, max = +input.max;
+    if (!isFinite(min) || !isFinite(max) || max <= min) return;
+    const pct = Math.max(0, Math.min(100, (+input.value - min) / (max - min) * 100));
+    container.style.setProperty('--fill', pct + '%');
+  };
+  setFill();
+  input.addEventListener('input', setFill);
 
-  field.addEventListener('pointerdown', e => {
+  handle.addEventListener('pointerdown', e => {
     if (e.button !== 0) return;
     const min = +input.min, max = +input.max, step = +input.step || 1;
     if (!isFinite(min) || !isFinite(max)) return;
@@ -632,7 +734,7 @@ document.querySelectorAll('.field input[type="number"]').forEach(input => {
       if (!scrubbing) {
         if (Math.abs(dx) < 3) return;                 // a plain click still focuses for typing
         scrubbing = true;
-        field.classList.add('scrubbing');
+        container.classList.add('scrubbing');
         document.body.classList.add('scrubbing');
         input.blur();
       }
@@ -645,12 +747,26 @@ document.querySelectorAll('.field input[type="number"]').forEach(input => {
     const up = () => {
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', up);
-      field.classList.remove('scrubbing');
+      container.classList.remove('scrubbing');
       document.body.classList.remove('scrubbing');
     };
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);
   });
+}
+// numeric fields: drag the whole field — but skip absolute dimensions,
+// where a 0–100 style slider/fill bar would be misleading.
+const NO_SCRUB = new Set(['width', 'height', 'strokeWidth']);
+document.querySelectorAll('.field input[type="number"]').forEach(input => {
+  if (NO_SCRUB.has(input.id)) return;
+  const field = input.closest('.field');
+  field.classList.add('scrub');
+  attachScrub(input, field, field);
+});
+// opacity: drag the opacity sub-area, fill bar under it
+document.querySelectorAll('.opac').forEach(input => {
+  const wrap = input.closest('.opwrap');
+  attachScrub(input, wrap, wrap);
 });
 
 // ---- exports ----
