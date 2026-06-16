@@ -167,13 +167,13 @@
   .kz-imgbtns { display: flex; gap: 12px; }
 
   /* swatches field: an editable row of colour chips */
-  .kz-swatches { display: flex; flex-wrap: wrap; gap: 6px; }
-  .kz-swchip { position: relative; width: 28px; height: 28px; border-radius: 5px; border: 1px solid hsl(var(--input)); cursor: pointer; background-clip: padding-box; }
+  .kz-swatches { display: grid; grid-template-columns: repeat(8, 1fr); gap: 6px; }
+  .kz-swchip { position: relative; width: auto; height: 30px; border-radius: 5px; border: 1px solid hsl(var(--input)); cursor: pointer; background-clip: padding-box; }
   .kz-swchip input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; border: none; cursor: pointer; padding: 0; }
   .kz-swrm { position: absolute; top: -6px; right: -6px; width: 15px; height: 15px; border: 1px solid hsl(var(--border)); border-radius: 50%;
     background: hsl(var(--card)); color: hsl(var(--foreground)); font-size: 11px; line-height: 1; cursor: pointer; opacity: 0; padding: 0; z-index: 1; }
   .kz-swchip:hover .kz-swrm { opacity: 1; }
-  .kz-swadd { width: 28px; height: 28px; border: 1px dashed hsl(var(--border)); border-radius: 5px; background: none; color: hsl(var(--muted-foreground)); cursor: pointer; font-size: 16px; }
+  .kz-swadd { width: auto; height: 30px; border: 1px dashed hsl(var(--border)); border-radius: 5px; background: none; color: hsl(var(--muted-foreground)); cursor: pointer; font-size: 16px; }
   .kz-swadd:hover { border-color: hsl(var(--ring)); color: hsl(var(--foreground)); }
 
   .kz-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
@@ -432,9 +432,19 @@
       o.value = value; o.textContent = typeof opt === "object" ? opt.label : opt;
       sel.appendChild(o);
     });
-    sel.addEventListener("change", () => store.set(key, sel.value));
+    // A select with `presets` acts as a launcher: choosing an option writes a
+    // preset value into another field (`writes`) and snaps back to its default,
+    // so the same preset can be re-applied. Presets are plain data (survive postMessage).
+    const isLauncher = field.presets && field.writes;
+    sel.addEventListener("change", () => {
+      if (isLauncher) {
+        const p = field.presets[sel.value];
+        if (p) store.set(field.writes, Array.isArray(p) ? p.slice() : p);
+        sel.value = field.default;            // reset launcher to placeholder
+      } else store.set(key, sel.value);
+    });
     wrap.appendChild(label); wrap.appendChild(sel);
-    const refresh = () => { sel.value = store.get()[key]; };
+    const refresh = () => { sel.value = isLauncher ? field.default : store.get()[key]; };
     refresh();
     return { node: wrap, refresh };
   }
@@ -709,6 +719,7 @@
       random: makeRandom(streamSeed, baseSeed),
       seed: baseSeed, mode,
       t: opts.t || 0, frame: opts.frameIndex || 0, duration: tool.duration || 0, fps: tool.fps || 30,
+      live: !!opts.live,   // true only during continuous rAF playback (not export / scrub) — gate audio on this
       uid: (name) => `${tool.id}-${name || "id"}-${uid++}`,
       svg: (tag, attrs) => { const el = document.createElementNS(SVG_NS, tag); if (attrs) for (const k in attrs) el.setAttribute(k, attrs[k]); return el; },
       colorToCss,
@@ -752,10 +763,10 @@
       return el ? sizeFromSvg(el) : { width: 600, height: 600 };
     }
     // Render a specific frame index. Static tools (animated=false) ignore idx.
-    function renderAt(idx) {
+    function renderAt(idx, live) {
       const state = resolveState(store.get());
       const t = animated ? idx / fps : 0;
-      const ctx = makeCtx(tool, state, mode, { frameIndex: idx, t, animated });
+      const ctx = makeCtx(tool, state, mode, { frameIndex: idx, t, animated, live: !!live });
       if (tool.render === "canvas") {
         const s = sizeOf(state);
         if (!canvas) { canvas = document.createElement("canvas"); ctx2d = canvas.getContext("2d"); }
@@ -776,7 +787,7 @@
       if (!playing) return;
       if (!lastTs) lastTs = ts;
       pos = (pos + ((ts - lastTs) / 1000) * fps) % totalFrames; lastTs = ts;
-      renderAt(Math.floor(pos));
+      renderAt(Math.floor(pos), /* live */ true);
       rafId = requestAnimationFrame(tick);
     }
     function play() { if (!animated || playing) return; playing = true; lastTs = 0; rafId = requestAnimationFrame(tick); }
