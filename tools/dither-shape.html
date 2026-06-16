@@ -106,7 +106,9 @@ Kazam.defineTool({
     fadeCurve:{ type: 'slider', label: 'Curve', group: 'Dither', col: 'half', default: 6, min: 0.2, max: 6, step: 0.1 },
 
     fg:      { type: 'color', label: 'Foreground', group: 'Colour', default: { hex: '#1f2e1c', opacity: 1 } },
-    bg:      { type: 'color', label: 'Background', group: 'Colour', optional: true, default: null },
+    bg:      { type: 'color', label: 'Background', group: 'Colour', default: { hex: '#ebf1e5', opacity: 1 } },
+    // the background fills the whole exported square (any shape); toggle it in Export.
+    includeBg: { type: 'toggle', label: 'Include background', group: 'Colour', export: true, default: true },
 
     strokeOn:    { type: 'toggle', label: 'Stroke', group: 'Stroke', header: true, default: true },
     strokeAlign: { type: 'select', label: 'Align', group: 'Stroke', col: 'half', default: 'outside',
@@ -144,9 +146,9 @@ Kazam.defineTool({
     }
     svg.append(defs);
 
-    if (bgHex) {
-      const bgN = shapeNode(ctx, S.shape, cx, cy, rx, ry, pts);
-      bgN.setAttribute('fill', bgHex);
+    // background fills the whole exported square (behind any shape), when included
+    if (S.includeBg && bgHex) {
+      const bgN = ctx.svg('rect', { x: 0, y: 0, width: svgW, height: svgH, fill: bgHex });
       if (bgOp < 1) bgN.setAttribute('fill-opacity', round(bgOp, 3));
       svg.append(bgN);
     }

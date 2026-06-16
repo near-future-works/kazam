@@ -8,16 +8,8 @@
 <body>
 <script>
 // ---------------------------------------------------------------------------
-// Pure helpers (geometry, colour maths, lookup tables) — no DOM, no globals.
+// Pure helpers (colour maths, easing) — no DOM beyond offscreen canvases.
 // ---------------------------------------------------------------------------
-
-const PALETTES = {
-  bauhaus:   ['#D62828','#E63946','#1D3461','#2B6CB0','#F6C012','#E8871E','#2E7D52','#1A1A1A','#F2EDE0','#9B2226','#6D4C9F','#C44536','#3A5A40','#8D99AE','#D9A441'],
-  primaries: ['#E4002B','#0057B8','#FFD200','#1A1A1A','#F4F1EA','#2E7D52','#E8871E'],
-  earth:     ['#8C5A3C','#C08552','#5E503F','#A68A64','#3B2F2F','#D6C7A1','#7F5539','#B08968','#9C6644'],
-  mono:      ['#111111','#2E2E2E','#4D4D4D','#6E6E6E','#909090','#B4B4B4','#D8D8D8','#F2F2F2'],
-  pastel:    ['#F7A1C4','#A0D8EF','#FBE7A1','#B5E6C9','#D6BCFA','#FFD8BE','#C9E4DE','#F2D7D9','#CDE7B0'],
-};
 
 const clamp255 = v => Math.max(0, Math.min(255, Math.round(v)));
 function hexToRgb(hex) {
@@ -41,38 +33,30 @@ function harmonize(rgb, targetHex, mode, strength) {
   for (let c = 0; c < 3; c++) { const a = rgb[c] / 255, tt = t[c] / 255; out[c] = (a + (blendChannel(a, tt, mode) - a) * strength) * 255; }
   return out;
 }
-
-function buildPalette(pool, count, random) {
-  const p = pool.slice();
-  for (let i = p.length - 1; i > 0; i--) { const k = random.int(i + 1); [p[i], p[k]] = [p[k], p[i]]; }
-  const out = [];
-  for (let i = 0; i < count; i++) {
-    const [r, g, b] = hexToRgb(p[i % p.length]);
-    const j = () => (random() - 0.5) * 26;
-    out.push([clamp255(r + j()), clamp255(g + j()), clamp255(b + j())]);
-  }
-  return out;
-}
-
-function cellFill(c2d, rgb, x, y, w, h, useGradient, state) {
+function cellFill(c2d, rgb, x, y, w, h, useGradient, S) {
   if (!useGradient) return rgbStr(rgb, 1);
-  const rad = (state.gradAngle * Math.PI) / 180, dx = Math.cos(rad), dy = Math.sin(rad);
+  const rad = (S.gradAngle * Math.PI) / 180, dx = Math.cos(rad), dy = Math.sin(rad);
   const cx = x + w / 2, cy = y + h / 2, half = (Math.abs(dx) * w + Math.abs(dy) * h) / 2;
   const g = c2d.createLinearGradient(cx - dx * half, cy - dy * half, cx + dx * half, cy + dy * half);
-  g.addColorStop(0, rgbStr(rgb, state.gradStart));
-  g.addColorStop(1, rgbStr(rgb, state.gradEnd));
+  g.addColorStop(0, rgbStr(rgb, S.gradStart));
+  g.addColorStop(1, rgbStr(rgb, S.gradEnd));
   return g;
 }
+function ease(p, mode) {
+  p = Math.max(0, Math.min(1, p));
+  if (mode === 'linear') return p;
+  if (mode === 'in') return p * p;
+  if (mode === 'out') return 1 - (1 - p) * (1 - p);
+  return p < 0.5 ? 2 * p * p : 1 - Math.pow(-2 * p + 2, 2) / 2; // in-out
+}
 
-// Per-cell animated offset. Seamless over the loop (integer turns). [0,0] when static.
-function motionOffset(gx, gy, state, t, ctx, cellW, cellH) {
-  const m = state.motion || 0;
-  if (m <= 0) return [0, 0];
-  const dur = ctx.duration || 8, turns = Math.max(1, Math.round(state.motionSpeed || 1));
-  const a = 2 * Math.PI * turns * (t / dur), amp = m * Math.min(cellW, cellH) * 1.8;
-  if (state.motionStyle === 'wave') { const w = a + gx * 0.6 + gy * 0.6; return [Math.cos(w) * amp, Math.sin(w) * amp * 0.5]; }
-  const ph = ctx.random.hash(gx, gy, 40) * Math.PI * 2;          // drift: per-cell circular
-  return [Math.cos(a + ph) * amp, Math.sin(a + ph) * amp];
+// Reused offscreen canvases for crossfading two compositions.
+const _scratch = [];
+function scratch(i, W, H) {
+  if (!_scratch[i]) { const cv = document.createElement('canvas'); _scratch[i] = { canvas: cv, ctx: cv.getContext('2d') }; }
+  const s = _scratch[i];
+  if (s.canvas.width !== W || s.canvas.height !== H) { s.canvas.width = W; s.canvas.height = H; }
+  return s;
 }
 
 Kazam.defineTool({
@@ -82,17 +66,16 @@ Kazam.defineTool({
   render: 'canvas',
   tagline: 'Generative pixel-grid compositions — block, paper-cutout, oil & movement — from a palette or an image.',
   groups: ['Canvas', 'Image', 'Palette', 'Composition', 'Gradient', 'Texture', 'Motion'],
-  preview: { background: '#e9e6df' },
   exportFormats: ['png'],
-  duration: 8,
+  duration: 6,
   fps: 30,
+  autoplay: false,   // open paused; motion is opt-in via the Animate toggle
 
   settings: {
     // --- Canvas ---
     width:      { type:'number', label:'Width',  group:'Canvas', col:'half', default:900, min:200, max:2000, step:10, unit:'px' },
     height:     { type:'number', label:'Height', group:'Canvas', col:'half', default:900, min:200, max:2000, step:10, unit:'px' },
     resolution: { type:'slider', label:'Resolution', group:'Canvas', default:24, min:4, max:160, step:1, unit:' cells' },
-    // margin defaults to "one cell" (auto, shown greyed); type a value to fix it.
     margin:     { type:'number', label:'Margin', group:'Canvas', col:'half', default:null, min:0, max:600, step:1, unit:'px',
                   auto: 'Math.round(width / (Math.max(1, Math.round(resolution)) + 2))' },
     canvasColor:{ type:'color',  label:'Canvas', group:'Canvas', col:'half', default:{ hex:'#ECE6DA', opacity:1 } },
@@ -100,12 +83,9 @@ Kazam.defineTool({
     // --- Image (optional source; when set, cells are sampled from it) ---
     image:      { type:'image', label:'Source image', group:'Image' },
 
-    // --- Palette (seeded; reroll the seed for a new palette) ---
-    paletteTheme: { type:'select', label:'Palette', group:'Palette', default:'bauhaus', options:[
-      { value:'bauhaus', label:'Bauhaus' }, { value:'primaries', label:'Primaries' },
-      { value:'earth', label:'Earth' }, { value:'mono', label:'Mono' }, { value:'pastel', label:'Pastel' },
-    ] },
-    colours:        { type:'slider', label:'Colours', group:'Palette', default:12, min:2, max:24, step:1 },
+    // --- Palette (editable swatches) ---
+    palette:        { type:'swatches', label:'Colours', group:'Palette', max:16,
+                      default:['#D62828','#2B6CB0','#F6C012','#1A1A1A','#F2EDE0','#2E7D52','#E8871E','#6D4C9F'] },
     harmony:        { type:'color',  label:'Harmony tint', group:'Palette', optional:true, default:null },
     harmonyStrength:{ type:'slider', label:'Harmony', group:'Palette', col:'half', default:0.4, min:0, max:1, step:0.01, format:'percent' },
     harmonyMode:    { type:'select', label:'Blend', group:'Palette', col:'half', default:'soft', options:[
@@ -130,88 +110,112 @@ Kazam.defineTool({
     // --- Texture ---
     noise: { type:'slider', label:'Grain', group:'Texture', default:0, min:0, max:1, step:0.01, format:'percent' },
 
-    // --- Motion (animation) ---
-    motion:      { type:'slider', label:'Motion', group:'Motion', col:'half', default:0, min:0, max:1, step:0.01, format:'percent' },
-    motionSpeed: { type:'slider', label:'Speed', group:'Motion', col:'half', default:1, min:1, max:5, step:1 },
-    motionStyle: { type:'select', label:'Style', group:'Motion', default:'drift', options:[
-      { value:'drift', label:'Drift' }, { value:'wave', label:'Wave' },
-    ] },
+    // --- Motion: re-roll the composition over time, with transitions ---
+    animate:    { type:'toggle', label:'Animate', group:'Motion', header:true, default:false },
+    period:     { type:'slider', label:'Hold', group:'Motion', col:'half', default:0.8, min:0.2, max:3, step:0.1, unit:'s' },
+    fade:       { type:'slider', label:'Fade', group:'Motion', col:'half', default:0.4, min:0, max:1.5, step:0.05, unit:'s' },
+    transition: { type:'select', label:'Transition', group:'Motion', col:'half', default:'crossfade', options:[
+      { value:'crossfade', label:'Crossfade' }, { value:'cut', label:'Cut' } ] },
+    easing:     { type:'select', label:'Easing', group:'Motion', col:'half', default:'inout', options:[
+      { value:'linear', label:'Linear' }, { value:'in', label:'In' }, { value:'out', label:'Out' }, { value:'inout', label:'In-out' } ] },
   },
 
-  size: (state) => ({ width: state.width, height: state.height }),
+  size: (S) => ({ width: S.width, height: S.height }),
 
-  frame(state, t, ctx) {
-    const c2d = ctx.ctx2d, W = state.width, H = state.height;
+  // Animation = a slideshow of re-rolled compositions. Each "state" is a stable
+  // composition (salt-keyed), so a held state never flickers; transitions crossfade.
+  frame(S, t, ctx) {
+    const c2d = ctx.ctx2d, W = S.width, H = S.height;
+    if (!S.animate) { paintComposition(c2d, W, H, S, ctx, 0); return; }
 
-    const cols = Math.max(1, Math.round(state.resolution));
-    const aspect = W / H;
-    const rows = Math.max(1, Math.round(cols / aspect));
-    const margin = state.margin == null ? Math.round(W / (cols + 2)) : state.margin;  // auto = one cell
-    const innerW = Math.max(1, W - margin * 2), innerH = Math.max(1, H - margin * 2);
-    const cellW = innerW / cols, cellH = innerH / rows, ox = margin, oy = margin;
+    const period = Math.max(0.15, S.period);
+    const fade = Math.min(S.fade, period * 0.9);
+    const dur = ctx.duration || 6;
+    const total = Math.max(1, Math.round(dur / period));
+    const sIndex = Math.floor(t / period), into = t - sIndex * period;
+    const cur = sIndex % total, next = (sIndex + 1) % total;
 
-    // colour source: an uploaded image (sampled to the grid) or the seeded palette
-    let sample = null;
-    if (state.image && state.image.bitmap) {
-      const img = state.image.bitmap;
-      const off = document.createElement('canvas'); off.width = cols; off.height = rows;
-      const ictx = off.getContext('2d');
-      const ia = img.width / img.height, ga = cols / rows;
-      let sw = img.width, sh = img.height, sx = 0, sy = 0;          // cover-fit
-      if (ia > ga) { sw = img.height * ga; sx = (img.width - sw) / 2; } else { sh = img.width / ga; sy = (img.height - sh) / 2; }
-      ictx.drawImage(img, sx, sy, sw, sh, 0, 0, cols, rows);
-      sample = ictx.getImageData(0, 0, cols, rows).data;
+    const a = scratch(0, W, H);
+    paintComposition(a.ctx, W, H, S, ctx, cur);
+    c2d.clearRect(0, 0, W, H);
+    c2d.drawImage(a.canvas, 0, 0);
+
+    if (S.transition !== 'cut' && fade > 0 && into > period - fade) {
+      const p = ease((into - (period - fade)) / fade, S.easing);
+      const b = scratch(1, W, H);
+      paintComposition(b.ctx, W, H, S, ctx, next);
+      c2d.globalAlpha = p; c2d.drawImage(b.canvas, 0, 0); c2d.globalAlpha = 1;
     }
-    let palette = buildPalette(PALETTES[state.paletteTheme] || PALETTES.bauhaus, Math.max(2, state.colours), ctx.random);
-    if (!sample && state.harmony) palette = palette.map(rgb => harmonize(rgb, state.harmony.hex, state.harmonyMode, state.harmonyStrength));
-
-    const cells = new Array(cols * rows);
-    for (let gy = 0; gy < rows; gy++) for (let gx = 0; gx < cols; gx++) {
-      const i = gy * cols + gx;
-      if (ctx.random.hash(gx, gy, 1) < state.whitespace) { cells[i] = null; continue; }
-      if (sample) {
-        const o = i * 4; let rgb = [sample[o], sample[o + 1], sample[o + 2]];
-        if (state.harmony) rgb = harmonize(rgb, state.harmony.hex, state.harmonyMode, state.harmonyStrength);
-        cells[i] = rgb;
-      } else {
-        cells[i] = palette[Math.floor(ctx.random.hash(gx, gy, 2) * palette.length)];
-      }
-    }
-
-    c2d.fillStyle = colorStr(state.canvasColor);
-    c2d.fillRect(0, 0, W, H);
-
-    const gradOn = (gx, gy) => state.gradEnabled && (state.gradCoverage >= 1 || ctx.random.hash(gx, gy, 7) < state.gradCoverage);
-    const moff = (gx, gy) => motionOffset(gx, gy, state, t, ctx, cellW, cellH);
-
-    if (state.artMode === 'paper') renderPaper(c2d, state, ctx, cells, cols, rows, ox, oy, cellW, cellH, gradOn, moff);
-    else if (state.artMode === 'oil') renderOil(c2d, state, ctx, cells, cols, rows, ox, oy, cellW, cellH, moff);
-    else if (state.artMode === 'movement') renderMovement(c2d, state, ctx, cells, cols, rows, ox, oy, innerW, innerH, cellW, cellH, gradOn, moff);
-    else renderBlock(c2d, state, cells, cols, rows, ox, oy, cellW, cellH, gradOn, moff);
-
-    if (state.noise > 0) renderNoise(c2d, state, ctx, ox, oy, innerW, innerH);
   },
 });
 
+// Render one full composition into c2d. `salt` re-rolls it (for the motion states).
+function paintComposition(c2d, W, H, S, ctx, salt) {
+  const cols = Math.max(1, Math.round(S.resolution));
+  const rows = Math.max(1, Math.round(cols / (W / H)));
+  const margin = S.margin == null ? Math.round(W / (cols + 2)) : S.margin;
+  const innerW = Math.max(1, W - margin * 2), innerH = Math.max(1, H - margin * 2);
+  const cellW = innerW / cols, cellH = innerH / rows, ox = margin, oy = margin;
+  const k = salt * 131;
+
+  // palette from the editable swatches, harmonised
+  let pal = (S.palette && S.palette.length ? S.palette : ['#888888']).map(hexToRgb);
+  if (S.harmony) pal = pal.map(rgb => harmonize(rgb, S.harmony.hex, S.harmonyMode, S.harmonyStrength));
+
+  // an uploaded image overrides the palette: cells sample its colours (cover-fit)
+  let sample = null;
+  if (S.image && S.image.bitmap) {
+    const img = S.image.bitmap, off = document.createElement('canvas'); off.width = cols; off.height = rows;
+    const ictx = off.getContext('2d');
+    const ia = img.width / img.height, ga = cols / rows;
+    let sw = img.width, sh = img.height, sx = 0, sy = 0;
+    if (ia > ga) { sw = img.height * ga; sx = (img.width - sw) / 2; } else { sh = img.width / ga; sy = (img.height - sh) / 2; }
+    ictx.drawImage(img, sx, sy, sw, sh, 0, 0, cols, rows);
+    sample = ictx.getImageData(0, 0, cols, rows).data;
+  }
+
+  const cells = new Array(cols * rows);
+  for (let gy = 0; gy < rows; gy++) for (let gx = 0; gx < cols; gx++) {
+    const i = gy * cols + gx;
+    if (ctx.random.hash(gx, gy, 1 + k) < S.whitespace) { cells[i] = null; continue; }
+    if (sample) {
+      const o = i * 4; let rgb = [sample[o], sample[o + 1], sample[o + 2]];
+      if (S.harmony) rgb = harmonize(rgb, S.harmony.hex, S.harmonyMode, S.harmonyStrength);
+      cells[i] = rgb;
+    } else {
+      cells[i] = pal[Math.floor(ctx.random.hash(gx, gy, 2 + k) * pal.length)];
+    }
+  }
+
+  c2d.fillStyle = colorStr(S.canvasColor);
+  c2d.fillRect(0, 0, W, H);
+  const gradOn = (gx, gy) => S.gradEnabled && (S.gradCoverage >= 1 || ctx.random.hash(gx, gy, 7 + k) < S.gradCoverage);
+
+  if (S.artMode === 'paper') renderPaper(c2d, S, ctx, cells, cols, rows, ox, oy, cellW, cellH, gradOn);
+  else if (S.artMode === 'oil') renderOil(c2d, S, ctx, cells, cols, rows, ox, oy, cellW, cellH);
+  else if (S.artMode === 'movement') renderMovement(c2d, S, ctx, cells, cols, rows, ox, oy, innerW, innerH, cellW, cellH, gradOn);
+  else renderBlock(c2d, S, cells, cols, rows, ox, oy, cellW, cellH, gradOn);
+
+  if (S.noise > 0) renderNoise(c2d, S, ctx, ox, oy, innerW, innerH);
+}
+
 // ---- art-mode renderers (canvas) ----
 
-function renderBlock(c2d, state, cells, cols, rows, ox, oy, cellW, cellH, gradOn, moff) {
+function renderBlock(c2d, S, cells, cols, rows, ox, oy, cellW, cellH, gradOn) {
   for (let gy = 0; gy < rows; gy++) for (let gx = 0; gx < cols; gx++) {
     const cell = cells[gy * cols + gx]; if (!cell) continue;
-    const [mx, my] = moff(gx, gy);
-    const x = Math.floor(ox + gx * cellW + mx), y = Math.floor(oy + gy * cellH + my);
+    const x = Math.floor(ox + gx * cellW), y = Math.floor(oy + gy * cellH);
     const w = Math.ceil(cellW) + 1, h = Math.ceil(cellH) + 1;
-    c2d.fillStyle = cellFill(c2d, cell, x, y, w, h, gradOn(gx, gy), state);
+    c2d.fillStyle = cellFill(c2d, cell, x, y, w, h, gradOn(gx, gy), S);
     c2d.fillRect(x, y, w, h);
   }
 }
 
-function renderPaper(c2d, state, ctx, cells, cols, rows, ox, oy, cellW, cellH, gradOn, moff) {
+function renderPaper(c2d, S, ctx, cells, cols, rows, ox, oy, cellW, cellH, gradOn) {
   const jitter = Math.min(cellW, cellH) * 0.12;
   for (let gy = 0; gy < rows; gy++) for (let gx = 0; gx < cols; gx++) {
     const cell = cells[gy * cols + gx]; if (!cell) continue;
-    const [mx, my] = moff(gx, gy);
-    const cx = ox + gx * cellW + cellW / 2 + mx, cy = oy + gy * cellH + cellH / 2 + my;
+    const cx = ox + gx * cellW + cellW / 2, cy = oy + gy * cellH + cellH / 2;
     const dx = (ctx.random.hash(gx, gy, 11) - 0.5) * jitter, dy = (ctx.random.hash(gx, gy, 12) - 0.5) * jitter;
     const rot = (ctx.random.hash(gx, gy, 13) - 0.5) * 0.08, scale = 1.02 + (ctx.random.hash(gx, gy, 14) - 0.5) * 0.06;
     c2d.save();
@@ -219,20 +223,19 @@ function renderPaper(c2d, state, ctx, cells, cols, rows, ox, oy, cellW, cellH, g
     c2d.shadowColor = 'rgba(0,0,0,0.18)';
     c2d.shadowBlur = Math.max(2, Math.min(cellW, cellH) * 0.12);
     c2d.shadowOffsetX = Math.min(cellW, cellH) * 0.05; c2d.shadowOffsetY = Math.min(cellW, cellH) * 0.06;
-    c2d.fillStyle = cellFill(c2d, cell, -cellW / 2, -cellH / 2, cellW, cellH, gradOn(gx, gy), state);
+    c2d.fillStyle = cellFill(c2d, cell, -cellW / 2, -cellH / 2, cellW, cellH, gradOn(gx, gy), S);
     c2d.fillRect(-cellW / 2, -cellH / 2, cellW, cellH);
     c2d.restore();
   }
   c2d.shadowColor = 'transparent'; c2d.shadowBlur = 0; c2d.shadowOffsetX = 0; c2d.shadowOffsetY = 0;
 }
 
-function renderOil(c2d, state, ctx, cells, cols, rows, ox, oy, cellW, cellH, moff) {
+function renderOil(c2d, S, ctx, cells, cols, rows, ox, oy, cellW, cellH) {
   c2d.lineCap = 'round';
   const strokeLen = Math.max(cellW, cellH) * 0.6;
   for (let gy = 0; gy < rows; gy++) for (let gx = 0; gx < cols; gx++) {
     const cell = cells[gy * cols + gx]; if (!cell) continue;
-    const [mx, my] = moff(gx, gy);
-    const x = ox + gx * cellW + mx, y = oy + gy * cellH + my;
+    const x = ox + gx * cellW, y = oy + gy * cellH;
     c2d.fillStyle = rgbStr(cell, 1); c2d.fillRect(x - 1, y - 1, cellW + 2, cellH + 2);
     const angle = (ctx.random.hash(gx, gy, 20) - 0.5) * 0.9 + (gx % 2 ? 0.4 : -0.4);
     for (let s = 0; s < 5; s++) {
@@ -250,14 +253,13 @@ function renderOil(c2d, state, ctx, cells, cols, rows, ox, oy, cellW, cellH, mof
   c2d.globalAlpha = 1;
 }
 
-function renderMovement(c2d, state, ctx, cells, cols, rows, ox, oy, innerW, innerH, cellW, cellH, gradOn, moff) {
+function renderMovement(c2d, S, ctx, cells, cols, rows, ox, oy, innerW, innerH, cellW, cellH, gradOn) {
   const steps = 12;
   c2d.save();
   c2d.beginPath(); c2d.rect(ox, oy, innerW, innerH); c2d.clip();
   for (let gy = 0; gy < rows; gy++) for (let gx = 0; gx < cols; gx++) {
     const cell = cells[gy * cols + gx]; if (!cell) continue;
-    const [mx, my] = moff(gx, gy);
-    const x = ox + gx * cellW + mx, y = oy + gy * cellH + my;
+    const x = ox + gx * cellW, y = oy + gy * cellH;
     if (ctx.random.hash(gx, gy, 30) < 0.3) { c2d.globalAlpha = 1; c2d.fillStyle = rgbStr(cell, 1); c2d.fillRect(x, y, cellW + 1, cellH + 1); continue; }
     const dist = (0.8 + ctx.random.hash(gx, gy, 31) * 1.6) * cellW;
     for (let s = steps; s >= 1; s--) {
@@ -266,13 +268,13 @@ function renderMovement(c2d, state, ctx, cells, cols, rows, ox, oy, innerW, inne
       c2d.fillRect(x - off, y - off, cellW + 1, cellH + 1);
     }
     c2d.globalAlpha = 1;
-    c2d.fillStyle = cellFill(c2d, cell, x, y, cellW + 1, cellH + 1, gradOn(gx, gy), state);
+    c2d.fillStyle = cellFill(c2d, cell, x, y, cellW + 1, cellH + 1, gradOn(gx, gy), S);
     c2d.fillRect(x, y, cellW + 1, cellH + 1);
   }
   c2d.globalAlpha = 1; c2d.restore();
 }
 
-function renderNoise(c2d, state, ctx, ox, oy, innerW, innerH) {
+function renderNoise(c2d, S, ctx, ox, oy, innerW, innerH) {
   const cap = 700, scale = Math.min(1, cap / Math.max(innerW, innerH));
   const w = Math.max(1, Math.floor(innerW * scale)), h = Math.max(1, Math.floor(innerH * scale));
   const off = document.createElement('canvas'); off.width = w; off.height = h;
@@ -284,7 +286,7 @@ function renderNoise(c2d, state, ctx, ox, oy, innerW, innerH) {
   octx.putImageData(img, 0, 0);
   c2d.save();
   c2d.beginPath(); c2d.rect(ox, oy, innerW, innerH); c2d.clip();
-  c2d.imageSmoothingEnabled = false; c2d.globalAlpha = state.noise * 0.55; c2d.globalCompositeOperation = 'overlay';
+  c2d.imageSmoothingEnabled = false; c2d.globalAlpha = S.noise * 0.55; c2d.globalCompositeOperation = 'overlay';
   c2d.drawImage(off, ox, oy, innerW, innerH);
   c2d.restore();
 }

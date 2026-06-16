@@ -166,6 +166,16 @@
   .kz-imgmeta { font-size: 11px; color: hsl(var(--muted-foreground)); margin-bottom: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .kz-imgbtns { display: flex; gap: 12px; }
 
+  /* swatches field: an editable row of colour chips */
+  .kz-swatches { display: flex; flex-wrap: wrap; gap: 6px; }
+  .kz-swchip { position: relative; width: 28px; height: 28px; border-radius: 5px; border: 1px solid hsl(var(--input)); cursor: pointer; background-clip: padding-box; }
+  .kz-swchip input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; border: none; cursor: pointer; padding: 0; }
+  .kz-swrm { position: absolute; top: -6px; right: -6px; width: 15px; height: 15px; border: 1px solid hsl(var(--border)); border-radius: 50%;
+    background: hsl(var(--card)); color: hsl(var(--foreground)); font-size: 11px; line-height: 1; cursor: pointer; opacity: 0; padding: 0; z-index: 1; }
+  .kz-swchip:hover .kz-swrm { opacity: 1; }
+  .kz-swadd { width: 28px; height: 28px; border: 1px dashed hsl(var(--border)); border-radius: 5px; background: none; color: hsl(var(--muted-foreground)); cursor: pointer; font-size: 16px; }
+  .kz-swadd:hover { border-color: hsl(var(--ring)); color: hsl(var(--foreground)); }
+
   .kz-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 
   .kz-btnrow { display: flex; gap: 8px; align-items: center; }
@@ -178,6 +188,12 @@
   .kz-mini:hover { color: hsl(var(--foreground)); }
   @keyframes kz-pop { 0% { transform: scale(1); } 30% { transform: scale(.93) rotate(-2deg); } 60% { transform: scale(1.05) rotate(1.5deg); } 100% { transform: scale(1); } }
   .kz-pop { animation: kz-pop .32s ease; }
+  .kz-themebtn { width: 26px; height: 26px; flex: none; padding: 0; border: 1px solid hsl(var(--border)); border-radius: calc(var(--radius) - 2px);
+    background: none; color: hsl(var(--muted-foreground)); cursor: pointer; font-size: 14px; line-height: 1; }
+  .kz-themebtn:hover { color: hsl(var(--foreground)); }
+  .kz-exptoggles { margin-top: 10px; display: flex; flex-direction: column; gap: 8px; }
+  .kz-check { display: flex; align-items: center; gap: 8px; color: hsl(var(--foreground)); font-size: 12px; cursor: pointer; }
+  .kz-check input { width: 15px; height: 15px; accent-color: hsl(var(--primary)); }
 
   /* stage */
   .kz-stage {
@@ -558,6 +574,42 @@
     return { node: container, refresh };
   }
 
+  // Swatches: an editable palette stored as a plain array of hex strings.
+  function renderSwatches(key, field, store) {
+    const wrap = document.createElement("div");
+    const label = document.createElement("label"); label.className = "kz-flabel"; label.textContent = field.label || key;
+    const row = document.createElement("div"); row.className = "kz-swatches";
+    wrap.append(label, row);
+    const max = field.max || 16;
+    const getArr = () => (store.get()[key] || []);
+    const setArr = arr => store.set(key, arr);
+
+    function build() {
+      row.innerHTML = "";
+      const arr = getArr();
+      arr.forEach((hex, i) => {
+        const chip = document.createElement("div"); chip.className = "kz-swchip"; chip.style.background = normHex(hex) || hex;
+        const picker = document.createElement("input"); picker.type = "color"; picker.value = normHex(hex) || "#888888";
+        picker.addEventListener("input", () => { const a = getArr().slice(); a[i] = picker.value; setArr(a); });
+        const rm = document.createElement("button"); rm.type = "button"; rm.className = "kz-swrm"; rm.textContent = "×"; rm.title = "Remove";
+        rm.addEventListener("click", e => { e.stopPropagation(); const a = getArr().slice(); a.splice(i, 1); setArr(a); });
+        chip.append(picker, rm); row.appendChild(chip);
+      });
+      if (arr.length < max) {
+        const add = document.createElement("button"); add.type = "button"; add.className = "kz-swadd"; add.textContent = "+"; add.title = "Add colour";
+        add.addEventListener("click", () => { const a = getArr().slice(); a.push("#888888"); setArr(a); });
+        row.appendChild(add);
+      }
+    }
+    const refresh = () => {
+      const arr = getArr(), chips = row.querySelectorAll(".kz-swchip");
+      if (chips.length !== arr.length) { build(); return; }   // structure changed → rebuild
+      arr.forEach((hex, i) => { chips[i].style.background = normHex(hex) || hex; const inp = chips[i].querySelector("input"); if (document.activeElement !== inp) inp.value = normHex(hex) || "#888888"; });
+    };
+    build();
+    return { node: wrap, refresh };
+  }
+
   function renderField(key, field, store) {
     switch (field.type) {
       case "slider": return renderNumeric(key, field, store, true);
@@ -567,6 +619,7 @@
       case "toggle": return renderToggle(key, field, store);
       case "text": return renderText(key, field, store);
       case "image": return renderImage(key, field, store);
+      case "swatches": return renderSwatches(key, field, store);
       default: { const d = document.createElement("div"); d.textContent = "Unsupported field: " + field.type; return { node: d, refresh() {} }; }
     }
   }
@@ -584,7 +637,8 @@
     const groups = inferGroups(settings, tool.groups);
     const byKey = {};
     groups.forEach(group => {
-      const keys = Object.keys(settings).filter(k => (settings[k].group || "Settings") === group);
+      // `export:true` fields render in the Export section, not the normal groups.
+      const keys = Object.keys(settings).filter(k => (settings[k].group || "Settings") === group && !settings[k].export);
       if (!keys.length) return;
       const section = document.createElement("div"); section.className = "kz-section";
       const head = document.createElement("div"); head.className = "kz-sechead";
@@ -619,6 +673,23 @@
       autoKeys.forEach(k => { if (k !== changedKey) byKey[k](); });
     });
     return byKey;
+  }
+
+  // Render `export:true` toggle fields as checkboxes (in the Export section).
+  function renderExportToggles(container, settings, store) {
+    const keys = Object.keys(settings).filter(k => settings[k].export && settings[k].type === "toggle");
+    if (!keys.length) return;
+    const wrap = document.createElement("div"); wrap.className = "kz-exptoggles";
+    keys.forEach(key => {
+      const f = settings[key];
+      const row = document.createElement("label"); row.className = "kz-check";
+      const cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = !!store.get()[key];
+      cb.addEventListener("change", () => store.set(key, cb.checked));
+      store.subscribe((s, ck) => { if (ck === null || ck === key) cb.checked = !!store.get()[key]; });
+      const span = document.createElement("span"); span.textContent = f.label || key;
+      row.append(cb, span); wrap.appendChild(row);
+    });
+    container.appendChild(wrap);
   }
 
   // ------------------------------------------------------------- preview + ctx
@@ -922,41 +993,9 @@
     return { autoplay() { player.play(); btn.innerHTML = PAUSE_SVG; } };
   }
 
-  // "Frame" section for the standalone panel: the preview backdrop colour (the stage
-  // behind the artwork — not exported) and the light/dark theme. Frame-wide controls,
-  // tucked into the panel rather than floating over the canvas.
-  function buildFrameSection(stage, fill, tool) {
-    const neutral = () => document.documentElement.classList.contains("dark") ? "#14151a" : "#f1f1f4";
-    let bg = (tool.preview && tool.preview.background && !isTransparent(tool.preview.background))
-      ? (normHex(tool.preview.background) || tool.preview.background) : neutral();
-    let bgManual = !!(tool.preview && tool.preview.background);
-
-    const section = document.createElement("div"); section.className = "kz-section";
-    const head = document.createElement("div"); head.className = "kz-sechead"; head.innerHTML = "<h2>Frame</h2>"; section.appendChild(head);
-
-    const bgRow = document.createElement("div"); bgRow.className = "kz-color-row";
-    const bgLabel = document.createElement("span"); bgLabel.className = "kz-flabel"; bgLabel.style.margin = "0"; bgLabel.style.width = "84px"; bgLabel.style.flex = "none"; bgLabel.textContent = "Background";
-    const sw = document.createElement("button"); sw.type = "button"; sw.className = "kz-swatch";
-    const picker = document.createElement("input"); picker.type = "color"; picker.className = "kz-picker"; picker.value = bg || "#888888";
-    const clear = document.createElement("button"); clear.type = "button"; clear.className = "kz-mini"; clear.textContent = "Clear";
-    bgRow.append(bgLabel, sw, clear, picker);
-
-    const applyBg = () => { fill.style.background = bg ? bg : "transparent"; sw.style.background = bg ? bg : CHECKER; };
-    sw.addEventListener("click", () => picker.click());
-    picker.addEventListener("input", () => { bg = picker.value; bgManual = true; applyBg(); });
-    clear.addEventListener("click", () => { bg = null; bgManual = true; applyBg(); });
-
-    const thRow = document.createElement("div"); thRow.className = "kz-toggle";
-    const thLabel = document.createElement("span"); thLabel.className = "kz-tlabel"; thLabel.textContent = "Dark mode";
-    const thSwitch = document.createElement("button"); thSwitch.type = "button"; thSwitch.className = "kz-switch";
-    const syncTheme = () => thSwitch.setAttribute("aria-checked", String(document.documentElement.classList.contains("dark")));
-    thSwitch.addEventListener("click", () => { document.documentElement.classList.toggle("dark"); if (!bgManual) bg = neutral(); applyBg(); syncTheme(); });
-    thRow.append(thLabel, thSwitch);
-
-    section.append(bgRow, thRow);
-    syncTheme(); applyBg();
-    return section;
-  }
+  // The preview backdrop is a single neutral tone derived from the theme (same for
+  // every tool); it tracks dark/light and isn't user-editable.
+  const neutralBg = () => document.documentElement.classList.contains("dark") ? "#14151a" : "#f1f1f4";
 
   // ------------------------------------------------------------- standalone shell
   function bootStandalone(tool) {
@@ -968,7 +1007,8 @@
     const panel = document.createElement("aside"); panel.className = "kz-panel";
     const head = document.createElement("div"); head.className = "kz-head";
     head.innerHTML =
-      `<div class="kz-titlerow"><h1>${tool.name || tool.id}</h1><span class="kz-badge">Standalone</span></div>` +
+      `<div class="kz-titlerow"><h1>${tool.name || tool.id}</h1><span class="kz-badge">Standalone</span>` +
+      `<span style="flex:1"></span><button class="kz-themebtn" id="kz-theme" title="Toggle theme">◑</button></div>` +
       (tool.tagline ? `<div class="kz-sub">${tool.tagline}</div>` : "");
     panel.appendChild(head);
 
@@ -1018,16 +1058,22 @@
     const cj = document.createElement("button"); cj.className = "kz-mini"; cj.textContent = "Copy state"; cj.addEventListener("click", () => { navigator.clipboard.writeText(store.serialise()); flashCopied(cj); }); copyRow.appendChild(cj);
     const lj = document.createElement("button"); lj.className = "kz-mini"; lj.textContent = "Load state"; lj.addEventListener("click", () => { const j = prompt("Paste state JSON"); if (j) store.deserialise(j); }); copyRow.appendChild(lj);
     exportSection.appendChild(copyRow);
+    renderExportToggles(exportSection, tool.settings || {}, store);
     panel.appendChild(exportSection);
-    panel.appendChild(buildFrameSection(stage, fill, tool));
 
     app.append(panel, stage);
     document.body.appendChild(app);
 
+    // theme toggle (header) + neutral backdrop that tracks it
+    const applyBackdrop = () => { fill.style.background = neutralBg(); };
+    const themeBtn = head.querySelector("#kz-theme");
+    if (themeBtn) themeBtn.addEventListener("click", () => { document.documentElement.classList.toggle("dark"); applyBackdrop(); preview.render(); });
+    applyBackdrop();
+
     const transport = addTransport(stage, preview);
     store.subscribe(() => preview.render());
     preview.render();
-    if (transport) transport.autoplay();
+    if (transport && tool.autoplay !== false) transport.autoplay();
   }
 
   // ------------------------------------------------------------- framed shell (lean; host = Phase 4)
@@ -1067,10 +1113,10 @@
         else exportArtifact(tool, preview.current, d.format, d.scale || 2, reply);
       }
     });
-    if (tool.preview && tool.preview.background) fill.style.background = tool.preview.background;
+    fill.style.background = neutralBg();   // host overrides via kazam/preview-bg
     const transport = addTransport(stage, preview);
     preview.render();
-    if (transport) transport.autoplay();
+    if (transport && tool.autoplay !== false) transport.autoplay();
     post({
       type: "kazam/ready",
       tool: { id: tool.id, name: tool.name, tagline: tool.tagline || "", render: tool.render, duration: tool.duration || 0, exportFormats: tool.exportFormats || ["svg", "png"], preview: tool.preview || null },
@@ -1098,6 +1144,6 @@
   // and uses these to build the controls panel + state store around tool iframes.
   window.Kazam = {
     defineTool, version: PROTOCOL,
-    host: { createStore, resolveDefaults, buildPanel, resolveTokens, download, flashCopied },
+    host: { createStore, resolveDefaults, buildPanel, resolveTokens, download, flashCopied, renderExportToggles, neutralBg },
   };
 })();

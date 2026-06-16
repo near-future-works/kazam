@@ -48,6 +48,8 @@
     <aside class="host-side">
       <div class="host-top">
         <span class="brand">Kazam</span>
+        <span class="spacer"></span>
+        <button class="host-theme" id="themeBtn" title="Toggle theme">◑</button>
       </div>
       <div class="host-toolsel">
         <select class="kz-select" id="toolSel"></select>
@@ -66,18 +68,6 @@
           <div class="host-action">
             <button class="kz-btn" id="copyHtml">Copy tool as HTML</button>
             <div class="host-action-desc">Send it to a teammate to drop into their own Kazam.</div>
-          </div>
-          <div class="host-framectrls">
-            <div class="host-fieldrow">
-              <span>Background</span><span class="spacer"></span>
-              <button class="sw" id="pbgSw" title="Preview background"></button>
-              <button class="kz-mini" id="pbgClr">Clear</button>
-              <input type="color" class="host-pick" id="pbgPick" value="#888888">
-            </div>
-            <div class="host-fieldrow">
-              <span>Dark mode</span><span class="spacer"></span>
-              <button class="kz-switch" id="themeSwitch" aria-checked="true"></button>
-            </div>
           </div>
         </div>
       </div>
@@ -111,7 +101,6 @@ const exportRow = document.getElementById("exportRow");
 let current = null;          // { tool, store, unsub }
 let currentPath = null;      // path/URL of the loaded tool file
 let reqId = 0; const pending = {};
-let pbg = null, pbgManual = false;          // host-side preview backdrop
 
 const post = msg => frame.contentWindow.postMessage(Object.assign({ v: V }, msg), "*");
 const isDark = () => document.documentElement.classList.contains("dark");
@@ -122,10 +111,12 @@ const toolSel = document.getElementById("toolSel");
 TOOLS.forEach(t => { const o = document.createElement("option"); o.value = t.id; o.textContent = t.name; toolSel.appendChild(o); });
 toolSel.addEventListener("change", () => loadTool(TOOLS.find(t => t.id === toolSel.value)));
 function loadTool(t) {
-  current = null; currentPath = t.path; pbgManual = false;   // each tool gets its own backdrop default
+  current = null; currentPath = t.path;
   controls.innerHTML = ""; exportRow.innerHTML = "";
   document.getElementById("toolDesc").textContent = "";
-  frame.src = t.path;       // framed: the tool's runtime detects window.self !== top
+  // cache-bust the iframe so edits to a tool show up on reload (dev convenience);
+  // currentPath stays clean so the copy/inline path fetches the canonical file.
+  frame.src = t.path + (t.path.includes("?") ? "&" : "?") + "_=" + Date.now();
 }
 
 // ---- handshake + wiring ----
@@ -143,10 +134,11 @@ function onReady(d) {
   document.getElementById("toolDesc").textContent = d.tool.tagline || "";
 
   buildExport(d.tool);
+  const exSection = document.getElementById("exportSection");
+  exSection.querySelectorAll(".kz-exptoggles").forEach(e => e.remove());
+  Kazam.host.renderExportToggles(exSection, d.schema, store);
 
-  // backdrop default: the tool's hint if it has one, else a neutral theme tone
-  if (!pbgManual) pbg = (d.tool.preview && d.tool.preview.background) || neutralBg();
-  applyPbg();
+  post({ type: "kazam/preview-bg", color: neutralBg() });   // single neutral backdrop for every tool
   post({ type: "kazam/tokens", dark: isDark() });
 }
 
@@ -224,19 +216,11 @@ document.getElementById("copySettings").addEventListener("click", (e) => {
   navigator.clipboard.writeText(txt);
   Kazam.host.flashCopied(e.currentTarget, "Copied!");
 });
-// ---- frame controls: backdrop + theme (in Tool settings) ----
-const pbgSw = document.getElementById("pbgSw"), pbgPick = document.getElementById("pbgPick"), pbgClr = document.getElementById("pbgClr");
-function applyPbg() { pbgSw.style.background = pbg || CHECKER; post({ type: "kazam/preview-bg", color: pbg || null }); }
-pbgSw.addEventListener("click", () => pbgPick.click());
-pbgPick.addEventListener("input", () => { pbg = pbgPick.value; pbgManual = true; applyPbg(); });
-pbgClr.addEventListener("click", () => { pbg = null; pbgManual = true; applyPbg(); });
-
-const themeSwitch = document.getElementById("themeSwitch");
-themeSwitch.addEventListener("click", () => {
+// ---- theme (backdrop follows it, same neutral tone for every tool) ----
+document.getElementById("themeBtn").addEventListener("click", () => {
   document.documentElement.classList.toggle("dark");
-  themeSwitch.setAttribute("aria-checked", String(isDark()));
   post({ type: "kazam/tokens", dark: isDark() });
-  if (!pbgManual) { pbg = neutralBg(); applyPbg(); }
+  post({ type: "kazam/preview-bg", color: neutralBg() });
 });
 
 // ---- boot ----
