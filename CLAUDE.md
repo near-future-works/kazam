@@ -102,10 +102,10 @@ Numeric keys: `min`, `max`, `step`, `unit?` (e.g. `'px'`, `'%'`), `format?` (`'p
 displays a 0–1 value as 0–100). Color keys: `optional?` (renders an "Add …/remove"
 affordance; an optional colour starts `null`).
 
-**Layout.** `col: 'half'` marks a field as eligible to share a row. The **frame** packs
-consecutive halves into two-up rows (as the original packed Density|Dot-size). The
-**standalone shell** may render single-column and ignore the hint — the hint is advisory,
-so the same schema looks right in both, just denser in the frame.
+**Layout.** `col: 'half'` marks a field as eligible to share a row; the runtime packs
+consecutive halves into two-up rows. Both the standalone shell and the frame honour the
+hint identically (the same `buildPanel(..., pair)` path), so the panel looks the same in
+either mode.
 
 **Reserved for asset tools** (declared now, implemented when first needed — see *Non-settings
 state* below): `image`, `points`/`path`.
@@ -249,9 +249,9 @@ authoring step, never required to run; see open question below.)
    works on `file://`, no build). Shipping a truly portable single file is an **optional
    inliner** step that bundles the runtime in — never required to run. Editing the runtime
    stays painless because dev uses the shared include.
-2. **Settings layout.** The schema carries a `col: 'half'` hint. The **frame** uses it to
-   pack two-up rows; the **standalone shell** may stay single-column (acceptable, and keeps
-   the standalone file simple). Same schema, denser in the frame.
+2. **Settings layout.** The schema carries a `col: 'half'` hint, packed into two-up rows by
+   the runtime. Standalone and frame share the same pairing path — no divergence (the brief
+   single-column standalone was unified once it proved to add complexity, not remove it).
 3. **Port fidelity (Phase 3).** The ported `tools/dither-shape.html` must reach **visual and
    feature parity** with the original `dither-shape.html` — same artwork, same controls —
    driven entirely by the runtime. That is the proof the contract is sufficient.

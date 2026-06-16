@@ -630,7 +630,7 @@
     head.innerHTML = `<h1>${tool.name || tool.id}</h1>` + (tool.tagline ? `<div class="kz-sub">${tool.tagline}</div>` : "");
     panel.appendChild(head);
 
-    buildPanel(panel, tool, store, /* pair */ false); // standalone = single column
+    buildPanel(panel, tool, store, /* pair */ true); // same two-up pairing as the frame
 
     // export + presets section
     const exportSection = document.createElement("div"); exportSection.className = "kz-section";
