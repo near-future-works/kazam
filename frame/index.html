@@ -22,8 +22,7 @@
   .host-stage { position: relative; overflow: hidden; }
   .host-frame { width: 100%; height: 100%; border: 0; display: block; }
   .host-bar { position: absolute; top: 10px; right: 10px; z-index: 2; display: flex; align-items: center; gap: 6px;
-    background: hsl(var(--card) / .72); border: 1px solid hsl(var(--border)); border-radius: calc(var(--radius) - 2px); padding: 4px 6px; }
-  .host-bar .lbl { color: hsl(var(--muted-foreground)); font-size: 11px; }
+    background: hsl(var(--card) / .25); border: 1px solid hsl(var(--border) / .5); border-radius: calc(var(--radius) - 2px); padding: 4px 6px; }
   .host-bar .sw { width: 20px; height: 20px; padding: 0; border: 1px solid hsl(var(--input)); border-radius: 4px; cursor: pointer; background-clip: padding-box; }
   .host-bar .clr { width: 16px; height: 20px; border: none; background: none; color: hsl(var(--muted-foreground)); cursor: pointer; }
   .host-pick { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
@@ -56,7 +55,6 @@
     </aside>
     <main class="host-stage">
       <div class="host-bar">
-        <span class="lbl">Backdrop</span>
         <button class="sw" id="pbgSw" title="Preview background"></button>
         <input type="color" class="host-pick" id="pbgPick" value="#ebf1e5">
         <button class="clr" id="pbgClr" title="Transparent">×</button>

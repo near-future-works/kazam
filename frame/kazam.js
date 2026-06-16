@@ -186,7 +186,7 @@
 
   /* preview backdrop control (the artwork's stage colour; not exported) */
   .kz-pbg { position: absolute; top: 10px; left: 10px; z-index: 2; display: flex; align-items: center; gap: 4px;
-    background: hsl(var(--card) / .72); border: 1px solid hsl(var(--border)); border-radius: calc(var(--radius) - 2px); padding: 4px; }
+    background: hsl(var(--card) / .25); border: 1px solid hsl(var(--border) / .5); border-radius: calc(var(--radius) - 2px); padding: 4px; }
   .kz-pbg-sw { width: 20px; height: 20px; flex: none; padding: 0; cursor: pointer; border: 1px solid hsl(var(--input)); border-radius: 4px; background-clip: padding-box; }
   .kz-pbg-clear { width: 18px; height: 20px; border: none; background: none; color: hsl(var(--muted-foreground)); cursor: pointer; font-size: 14px; }
   .kz-pbg-clear:hover { color: hsl(var(--foreground)); }`;
