@@ -688,6 +688,105 @@
     })();
   }
 
+  // ---- GIF export: self-contained encoder (median-cut quantise + LZW), no deps ----
+  function colRange(px) {
+    let rmin = 255, rmax = 0, gmin = 255, gmax = 0, bmin = 255, bmax = 0;
+    for (let i = 0; i < px.length; i++) { const p = px[i]; if (p[0] < rmin) rmin = p[0]; if (p[0] > rmax) rmax = p[0]; if (p[1] < gmin) gmin = p[1]; if (p[1] > gmax) gmax = p[1]; if (p[2] < bmin) bmin = p[2]; if (p[2] > bmax) bmax = p[2]; }
+    const dr = rmax - rmin, dg = gmax - gmin, db = bmax - bmin, max = Math.max(dr, dg, db);
+    return { max, axis: max === dr ? 0 : max === dg ? 1 : 2 };
+  }
+  function medianCut(pixels, maxColors) {
+    if (!pixels.length) return [[0, 0, 0]];
+    let boxes = [pixels];
+    while (boxes.length < maxColors) {
+      let bi = -1, best = -1, axis = 0;
+      for (let i = 0; i < boxes.length; i++) { if (boxes[i].length < 2) continue; const r = colRange(boxes[i]); if (r.max > best) { best = r.max; bi = i; axis = r.axis; } }
+      if (bi < 0) break;
+      const px = boxes[bi]; px.sort((a, b) => a[axis] - b[axis]);
+      const mid = px.length >> 1;
+      boxes.splice(bi, 1, px.slice(0, mid), px.slice(mid));
+    }
+    return boxes.map(px => { let r = 0, g = 0, b = 0; for (const p of px) { r += p[0]; g += p[1]; b += p[2]; } const n = px.length || 1; return [Math.round(r / n), Math.round(g / n), Math.round(b / n)]; });
+  }
+  function lzwEncode(indices, minCode) {
+    const clearCode = 1 << minCode, eoiCode = clearCode + 1, out = [];
+    let cur = 0, bits = 0;
+    const put = (code, size) => { cur |= code << bits; bits += size; while (bits >= 8) { out.push(cur & 255); cur >>>= 8; bits -= 8; } };
+    let codeSize = minCode + 1, next = eoiCode + 1, dict = new Map();
+    put(clearCode, codeSize);
+    let prev = indices[0];
+    for (let i = 1; i < indices.length; i++) {
+      const k = indices[i], key = prev * 256 + k, got = dict.get(key);
+      if (got !== undefined) { prev = got; continue; }
+      put(prev, codeSize);
+      dict.set(key, next++);
+      if (next === (1 << codeSize) && codeSize < 12) codeSize++;
+      if (next === 4096) { put(clearCode, codeSize); dict = new Map(); next = eoiCode + 1; codeSize = minCode + 1; }
+      prev = k;
+    }
+    put(prev, codeSize); put(eoiCode, codeSize);
+    if (bits > 0) out.push(cur & 255);
+    return out;
+  }
+  // One global palette + a cached nearest-colour grid across all frames. Runs the
+  // heavy work synchronously after a short defer (so the button repaints) — internal
+  // per-frame yields get throttled to ~1s each in a background tab, which is far
+  // slower than the ~2s encode itself.
+  function exportGIF(preview, cb) {
+    const src = preview.current;
+    if (!preview.animated || !(src instanceof HTMLCanvasElement)) return cb(null);
+    const scale = Math.min(1, 360 / Math.max(src.width, src.height));
+    const W = Math.max(1, Math.round(src.width * scale)), H = Math.max(1, Math.round(src.height * scale)), N = W * H;
+    const total = preview.totalFrames;
+    const stride = Math.max(Math.round(preview.fps / 12), Math.ceil(total / 40));   // ≤40 frames
+    const delayCs = Math.max(2, Math.round(100 * stride / preview.fps));
+    preview.pause();
+
+    setTimeout(() => {
+      const off = document.createElement("canvas"); off.width = W; off.height = H;
+      const octx = off.getContext("2d");
+      const frames = [];
+      for (let i = 0; i < total; i += stride) {
+        preview.renderAt(i);
+        octx.clearRect(0, 0, W, H); octx.drawImage(src, 0, 0, W, H);
+        frames.push(octx.getImageData(0, 0, W, H).data);
+      }
+
+      // global palette from a sample across every frame
+      const samples = [], step = Math.max(1, Math.floor(N / 1500));
+      for (const d of frames) for (let p = 0; p < N; p += step) { const o = p * 4; samples.push([d[o], d[o + 1], d[o + 2]]); }
+      const palette = medianCut(samples, 256);
+      let bits = 1; while ((1 << bits) < palette.length) bits++;
+      const tableSize = 1 << bits, minCode = Math.max(2, bits);
+      const grid = new Int16Array(32768).fill(-1);
+      const indexOf = (r, g, b) => {
+        const key = ((r >> 3) << 10) | ((g >> 3) << 5) | (b >> 3);
+        let pi = grid[key];
+        if (pi < 0) { let bd = 1e9; for (let k = 0; k < palette.length; k++) { const c = palette[k], dd = (c[0] - r) * (c[0] - r) + (c[1] - g) * (c[1] - g) + (c[2] - b) * (c[2] - b); if (dd < bd) { bd = dd; pi = k; } } grid[key] = pi; }
+        return pi;
+      };
+
+      const out = [];
+      const str = s => { for (let i = 0; i < s.length; i++) out.push(s.charCodeAt(i)); };
+      str("GIF89a"); out.push(W & 255, W >> 8, H & 255, H >> 8, 0x80 | (bits - 1), 0, 0);     // global color table
+      for (let i = 0; i < tableSize; i++) { const c = palette[i] || [0, 0, 0]; out.push(c[0], c[1], c[2]); }
+      out.push(0x21, 0xff, 0x0b); str("NETSCAPE2.0"); out.push(0x03, 0x01, 0x00, 0x00, 0x00); // loop forever
+
+      for (const data of frames) {
+        const indices = new Uint8Array(N);
+        for (let p = 0; p < N; p++) { const o = p * 4; indices[p] = indexOf(data[o], data[o + 1], data[o + 2]); }
+        out.push(0x21, 0xf9, 0x04, 0x00, delayCs & 255, delayCs >> 8, 0x00, 0x00);           // graphic control (delay)
+        out.push(0x2c, 0, 0, 0, 0, W & 255, W >> 8, H & 255, H >> 8, 0x00);                  // image descriptor (no local table)
+        out.push(minCode);
+        const lzw = lzwEncode(indices, minCode);
+        for (let q = 0; q < lzw.length;) { const len = Math.min(255, lzw.length - q); out.push(len); for (let k = 0; k < len; k++) out.push(lzw[q + k]); q += len; }
+        out.push(0x00);
+      }
+      out.push(0x3b);                                                                         // trailer
+      cb({ kind: "blob", blob: new Blob([new Uint8Array(out)], { type: "image/gif" }) });
+    }, 30);
+  }
+
   function exporter(tool, preview) {
     return {
       downloadSVG() { exportArtifact(tool, preview.current, "svg", 1, a => a && download(new Blob([a.text], { type: "image/svg+xml" }), `${tool.id}.svg`)); },
@@ -695,6 +794,7 @@
       downloadPNG(scale) { scale = scale || 2; exportArtifact(tool, preview.current, "png", scale, a => a && download(a.blob, `${tool.id}@${scale}x.png`)); },
       copyPNG(scale) { exportArtifact(tool, preview.current, "png", scale || 2, a => a && navigator.clipboard.write([new ClipboardItem({ "image/png": a.blob })]).catch(() => {})); },
       downloadWebM(done) { exportWebM(preview, a => { if (a) download(a.blob, `${tool.id}.webm`); done && done(); }); },
+      downloadGIF(done) { exportGIF(preview, a => { if (a) download(a.blob, `${tool.id}.gif`); done && done(); }); },
     };
   }
 
@@ -788,9 +888,11 @@
 
     if (preview.animated) {
       const arow = document.createElement("div"); arow.className = "kz-btnrow"; arow.style.marginTop = "8px";
+      const g = document.createElement("button"); g.className = "kz-btn"; g.textContent = "GIF";
+      g.addEventListener("click", () => { if (g.disabled) return; g.disabled = true; g.textContent = "Encoding…"; ex.downloadGIF(() => { g.disabled = false; g.textContent = "GIF"; }); });
       const w = document.createElement("button"); w.className = "kz-btn"; w.textContent = "WebM";
-      w.addEventListener("click", () => { if (w.disabled) return; w.disabled = true; const t = w.textContent; w.textContent = "Recording…"; ex.downloadWebM(() => { w.disabled = false; w.textContent = t; }); });
-      arow.appendChild(w);
+      w.addEventListener("click", () => { if (w.disabled) return; w.disabled = true; w.textContent = "Recording…"; ex.downloadWebM(() => { w.disabled = false; w.textContent = "WebM"; }); });
+      arow.append(g, w);
       exportSection.appendChild(arow);
     }
 
@@ -844,6 +946,7 @@
       else if (d.type === "kazam/export") {
         const reply = payload => post({ type: "kazam/export-result", requestId: d.requestId, format: d.format, ok: !!payload, payload: payload });
         if (d.format === "webm") exportWebM(preview, reply);
+        else if (d.format === "gif") exportGIF(preview, reply);
         else exportArtifact(tool, preview.current, d.format, d.scale || 2, reply);
       }
     });

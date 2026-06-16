@@ -161,12 +161,16 @@ function buildExport(tool) {
     [1, 2, 4].forEach(s => { const o = document.createElement("option"); o.value = s; o.textContent = s + "×"; if (s === 2) o.selected = true; scaleSel.appendChild(o); });
     exportRow.appendChild(scaleSel);
   }
-  if (tool.duration > 0) {  // animated → offer WebM
-    const b = addBtn("WebM", "kz-btn", () => {
-      if (b.disabled) return; b.disabled = true; const label = b.textContent; b.textContent = "Recording…";
-      const id = requestExport("webm");
-      pendingDone[id] = () => { b.disabled = false; b.textContent = label; };
-    });
+  if (tool.duration > 0) {  // animated → offer GIF + WebM
+    const animBtn = (label, format, busy) => {
+      const b = addBtn(label, "kz-btn", () => {
+        if (b.disabled) return; b.disabled = true; b.textContent = busy;
+        const id = requestExport(format);
+        pendingDone[id] = () => { b.disabled = false; b.textContent = label; };
+      });
+    };
+    animBtn("GIF", "gif", "Encoding…");
+    animBtn("WebM", "webm", "Recording…");
   }
 }
 const pendingDone = {};
