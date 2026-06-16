@@ -660,12 +660,41 @@
     if (tool.render === "canvas") { el.toBlob(b => cb({ kind: "blob", blob: b }), "image/png"); return; }
     rasterise(el, scale || 2, b => cb({ kind: "blob", blob: b }));
   }
+  // ---- animated export: WebM via the built-in MediaRecorder (zero dependency) ----
+  // Drives the player frame-by-frame through one loop, recording the canvas.
+  function exportWebM(preview, cb) {
+    const canvas = preview.current;
+    if (!preview.animated || !(canvas instanceof HTMLCanvasElement) || typeof MediaRecorder === "undefined") return cb(null);
+    const fps = preview.fps;
+    const mime = ["video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm"]
+      .find(m => { try { return MediaRecorder.isTypeSupported(m); } catch (e) { return false; } }) || "video/webm";
+    const stream = canvas.captureStream(0);
+    const track = stream.getVideoTracks()[0];
+    const manual = track && typeof track.requestFrame === "function";
+    const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 12000000 });
+    const chunks = [];
+    rec.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
+    rec.onstop = () => cb({ kind: "blob", blob: new Blob(chunks, { type: "video/webm" }) });
+    preview.pause();
+    rec.start();
+    const total = preview.totalFrames;
+    let i = 0;
+    (function step() {
+      preview.renderAt(i % total);
+      if (manual) track.requestFrame();
+      i++;
+      if (i <= total) setTimeout(step, 1000 / fps);
+      else setTimeout(() => rec.stop(), 1000 / fps);
+    })();
+  }
+
   function exporter(tool, preview) {
     return {
       downloadSVG() { exportArtifact(tool, preview.current, "svg", 1, a => a && download(new Blob([a.text], { type: "image/svg+xml" }), `${tool.id}.svg`)); },
       copySVG() { exportArtifact(tool, preview.current, "svg", 1, a => a && navigator.clipboard.writeText(a.text)); },
       downloadPNG(scale) { scale = scale || 2; exportArtifact(tool, preview.current, "png", scale, a => a && download(a.blob, `${tool.id}@${scale}x.png`)); },
       copyPNG(scale) { exportArtifact(tool, preview.current, "png", scale || 2, a => a && navigator.clipboard.write([new ClipboardItem({ "image/png": a.blob })]).catch(() => {})); },
+      downloadWebM(done) { exportWebM(preview, a => { if (a) download(a.blob, `${tool.id}.webm`); done && done(); }); },
     };
   }
 
@@ -757,6 +786,14 @@
     }
     exportSection.appendChild(row);
 
+    if (preview.animated) {
+      const arow = document.createElement("div"); arow.className = "kz-btnrow"; arow.style.marginTop = "8px";
+      const w = document.createElement("button"); w.className = "kz-btn"; w.textContent = "WebM";
+      w.addEventListener("click", () => { if (w.disabled) return; w.disabled = true; const t = w.textContent; w.textContent = "Recording…"; ex.downloadWebM(() => { w.disabled = false; w.textContent = t; }); });
+      arow.appendChild(w);
+      exportSection.appendChild(arow);
+    }
+
     const copyRow = document.createElement("div"); copyRow.className = "kz-btnrow"; copyRow.style.marginTop = "8px";
     if (formats.includes("svg")) { const c = document.createElement("button"); c.className = "kz-mini"; c.textContent = "Copy SVG"; c.addEventListener("click", () => ex.copySVG()); copyRow.appendChild(c); }
     if (formats.includes("png")) { const c = document.createElement("button"); c.className = "kz-mini"; c.textContent = "Copy PNG"; c.addEventListener("click", () => ex.copyPNG(+scaleSel.value)); copyRow.appendChild(c); }
@@ -805,8 +842,9 @@
       else if (d.type === "kazam/tokens") { document.documentElement.classList.toggle("dark", !!d.dark); preview.render(); }
       else if (d.type === "kazam/preview-bg") { fill.style.background = d.color || "transparent"; }
       else if (d.type === "kazam/export") {
-        exportArtifact(tool, preview.current, d.format, d.scale || 2, payload =>
-          post({ type: "kazam/export-result", requestId: d.requestId, format: d.format, ok: !!payload, payload: payload }));
+        const reply = payload => post({ type: "kazam/export-result", requestId: d.requestId, format: d.format, ok: !!payload, payload: payload });
+        if (d.format === "webm") exportWebM(preview, reply);
+        else exportArtifact(tool, preview.current, d.format, d.scale || 2, reply);
       }
     });
     if (tool.preview && tool.preview.background) fill.style.background = tool.preview.background;

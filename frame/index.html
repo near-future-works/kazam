@@ -141,7 +141,7 @@ function onReady(d) {
   current = { tool: d.tool, store, unsub, path: currentPath };
   document.getElementById("toolDesc").textContent = d.tool.tagline || "";
 
-  buildExport(d.tool.exportFormats || ["svg", "png"]);
+  buildExport(d.tool);
 
   // initial preview backdrop: tool's hint unless the host already has one
   if (d.tool.preview && d.tool.preview.background && pbg === "#ebf1e5") pbg = d.tool.preview.background;
@@ -151,8 +151,9 @@ function onReady(d) {
 
 // ---- export ----
 let scaleSel;
-function buildExport(formats) {
+function buildExport(tool) {
   exportRow.innerHTML = "";
+  const formats = tool.exportFormats || ["svg", "png"];
   if (formats.includes("svg")) addBtn("SVG", "kz-btn", () => requestExport("svg"));
   if (formats.includes("png")) {
     addBtn("PNG", "kz-btn kz-primary", () => requestExport("png", +scaleSel.value));
@@ -160,14 +161,25 @@ function buildExport(formats) {
     [1, 2, 4].forEach(s => { const o = document.createElement("option"); o.value = s; o.textContent = s + "×"; if (s === 2) o.selected = true; scaleSel.appendChild(o); });
     exportRow.appendChild(scaleSel);
   }
+  if (tool.duration > 0) {  // animated → offer WebM
+    const b = addBtn("WebM", "kz-btn", () => {
+      if (b.disabled) return; b.disabled = true; const label = b.textContent; b.textContent = "Recording…";
+      const id = requestExport("webm");
+      pendingDone[id] = () => { b.disabled = false; b.textContent = label; };
+    });
+  }
 }
-function addBtn(text, cls, fn) { const b = document.createElement("button"); b.className = cls; b.textContent = text; b.addEventListener("click", fn); exportRow.appendChild(b); }
-function requestExport(format, scale) { const id = ++reqId; pending[id] = { format, scale }; post({ type: "kazam/export", requestId: id, format, scale }); }
+const pendingDone = {};
+function addBtn(text, cls, fn) { const b = document.createElement("button"); b.className = cls; b.textContent = text; b.addEventListener("click", fn); exportRow.appendChild(b); return b; }
+function requestExport(format, scale) { const id = ++reqId; pending[id] = { format, scale }; post({ type: "kazam/export", requestId: id, format, scale }); return id; }
 function onExportResult(d) {
   const p = pending[d.requestId]; if (!p) return; delete pending[d.requestId];
+  if (pendingDone[d.requestId]) { pendingDone[d.requestId](); delete pendingDone[d.requestId]; }
   const id = current.tool.id;
-  if (d.payload.kind === "text") Kazam.host.download(new Blob([d.payload.text], { type: "image/svg+xml" }), `${id}.svg`);
-  else Kazam.host.download(d.payload.blob, `${id}@${p.scale || 2}x.png`);
+  if (d.payload && d.payload.kind === "text") return Kazam.host.download(new Blob([d.payload.text], { type: "image/svg+xml" }), `${id}.svg`);
+  if (!d.payload || !d.payload.blob) return;
+  const name = d.format === "png" ? `${id}@${p.scale || 2}x.png` : `${id}.${d.format}`;
+  Kazam.host.download(d.payload.blob, name);
 }
 
 // ---- tool file: copy / download / import ----
