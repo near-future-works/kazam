@@ -1,0 +1,709 @@
+/*
+ * Kazam runtime. See ../CLAUDE.md for the contract.
+ *
+ * One file, included by every tool via <script src="../frame/kazam.js">. It:
+ *   - exposes Kazam.defineTool(def)
+ *   - injects theme tokens (based on shadcn/ui) + component CSS
+ *   - detects standalone vs framed (window.self !== window.top)
+ *   - standalone: builds a settings panel from the schema, a preview stage, export/copy
+ *   - framed (lean here; host arrives in Phase 4): renders preview only, bridges via postMessage
+ *   - owns the state store (serialise/deserialise), seeded RNG, and SVG/PNG export
+ *
+ * Tools own only their settings declaration and build()/frame() function.
+ */
+(function () {
+  "use strict";
+
+  const SVG_NS = "http://www.w3.org/2000/svg";
+  const PROTOCOL = 1;
+
+  // ----------------------------------------------------------------- tokens
+  // shadcn/ui default (neutral) palette. :root = light, .dark = dark overrides.
+  const TOKEN_CSS = `
+  .kz-root {
+    --background: 0 0% 100%;
+    --foreground: 240 10% 3.9%;
+    --card: 0 0% 100%;
+    --muted: 240 4.8% 95.9%;
+    --muted-foreground: 240 3.8% 46.1%;
+    --border: 240 5.9% 90%;
+    --input: 240 5.9% 90%;
+    --ring: 240 5.9% 10%;
+    --primary: 240 5.9% 10%;
+    --primary-foreground: 0 0% 98%;
+    --secondary: 240 4.8% 95.9%;
+    --secondary-foreground: 240 5.9% 10%;
+    --radius: 0.5rem;
+  }
+  .kz-root.dark {
+    --background: 240 10% 3.9%;
+    --foreground: 0 0% 98%;
+    --card: 240 10% 3.9%;
+    --muted: 240 3.7% 15.9%;
+    --muted-foreground: 240 5% 64.9%;
+    --border: 240 3.7% 15.9%;
+    --input: 240 3.7% 15.9%;
+    --ring: 240 4.9% 83.9%;
+    --primary: 0 0% 98%;
+    --primary-foreground: 240 5.9% 10%;
+    --secondary: 240 3.7% 15.9%;
+    --secondary-foreground: 0 0% 98%;
+  }`;
+
+  // ------------------------------------------------------------- component CSS
+  const COMPONENT_CSS = `
+  .kz-root, .kz-root * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  .kz-app {
+    font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    background: hsl(var(--background)); color: hsl(var(--foreground));
+    display: grid; grid-template-columns: 340px 1fr; height: 100vh;
+  }
+  .kz-panel { background: hsl(var(--card)); border-right: 1px solid hsl(var(--border)); overflow-y: auto; }
+  .kz-head { padding: 14px 16px 12px; }
+  .kz-head h1 { font-size: 13px; font-weight: 600; margin: 0; }
+  .kz-head .kz-sub { color: hsl(var(--muted-foreground)); font-size: 11px; line-height: 1.4; margin-top: 4px; }
+  .kz-section { padding: 14px 16px; border-top: 1px solid hsl(var(--border)); }
+  .kz-section > * { margin: 0 0 12px; }
+  .kz-section > *:last-child { margin-bottom: 0; }
+  .kz-sechead { display: flex; align-items: center; justify-content: space-between; min-height: 22px; }
+  .kz-sechead h2 { font-size: 13px; font-weight: 600; margin: 0; }
+  .kz-flabel { display: block; font-size: 11px; color: hsl(var(--muted-foreground)); margin: 0 0 6px; }
+
+  .kz-field {
+    position: relative; overflow: hidden; display: flex; align-items: center; gap: 6px; height: 30px;
+    background: hsl(var(--secondary)); border: 1px solid transparent;
+    border-radius: calc(var(--radius) - 2px); padding: 0 8px;
+  }
+  .kz-field:focus-within { border-color: hsl(var(--ring)); }
+  .kz-field .kz-pfx { color: hsl(var(--muted-foreground)); font-size: 12px; }
+  .kz-field .kz-sfx { color: hsl(var(--muted-foreground)); font-size: 11px; }
+  .kz-field input {
+    flex: 1; min-width: 0; background: none; border: none; color: hsl(var(--foreground));
+    font: inherit; padding: 0; font-variant-numeric: tabular-nums;
+  }
+  .kz-field input:focus { outline: none; }
+  .kz-field.kz-scrub input { cursor: ew-resize; }
+  .kz-field.kz-scrub input:focus { cursor: text; }
+  .kz-field.kz-scrub::after {
+    content: ""; position: absolute; left: 0; bottom: 0; height: 2px;
+    width: var(--fill, 0%); background: hsl(var(--muted-foreground) / .5); pointer-events: none;
+  }
+  .kz-field.kz-scrubbing::after, .kz-field:focus-within.kz-scrub::after { background: hsl(var(--ring)); }
+  body.kz-scrubbing, body.kz-scrubbing * { user-select: none; cursor: ew-resize !important; }
+
+  input[type="number"].kz-num { appearance: textfield; -moz-appearance: textfield; }
+  input[type="number"].kz-num::-webkit-outer-spin-button,
+  input[type="number"].kz-num::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+
+  .kz-select {
+    width: 100%; height: 30px; padding: 0 26px 0 8px;
+    appearance: none; -webkit-appearance: none; -moz-appearance: none;
+    background-color: hsl(var(--secondary));
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none' stroke='%23a1a1aa' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 4.5 6 7.5 9 4.5'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: right 8px center;
+    border: 1px solid transparent; color: hsl(var(--foreground));
+    border-radius: calc(var(--radius) - 2px); font: inherit; cursor: pointer;
+  }
+  .kz-select:focus { outline: none; border-color: hsl(var(--ring)); }
+
+  .kz-toggle { display: flex; align-items: center; justify-content: space-between; }
+  .kz-toggle .kz-tlabel { color: hsl(var(--foreground)); }
+  .kz-switch { width: 34px; height: 20px; border-radius: 999px; background: hsl(var(--input));
+    position: relative; cursor: pointer; border: none; padding: 0; transition: background .15s; }
+  .kz-switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px;
+    border-radius: 50%; background: hsl(var(--background)); transition: left .15s; }
+  .kz-switch[aria-checked="true"] { background: hsl(var(--primary)); }
+  .kz-switch[aria-checked="true"]::after { left: 16px; }
+
+  /* colour field: swatch · hex | opacity */
+  .kz-color-row { display: flex; align-items: center; gap: 8px; }
+  .kz-cfield {
+    position: relative; overflow: hidden; flex: 1; min-width: 0; height: 30px;
+    display: flex; align-items: center; padding: 0 0 0 5px;
+    background: hsl(var(--secondary)); border: 1px solid transparent; border-radius: calc(var(--radius) - 2px);
+  }
+  .kz-cfield:focus-within { border-color: hsl(var(--ring)); }
+  .kz-swatch { width: 18px; height: 18px; flex: none; margin-right: 7px; padding: 0; cursor: pointer;
+    border: 1px solid hsl(var(--input)); border-radius: 4px; background-clip: padding-box; }
+  .kz-cfield .kz-hex { flex: 1; min-width: 0; background: none; border: none; color: hsl(var(--foreground));
+    font: inherit; padding: 0 8px 0 0; text-transform: lowercase; }
+  .kz-cfield .kz-hex:focus { outline: none; }
+  .kz-divline { width: 1px; align-self: stretch; flex: none; background: hsl(var(--background)); }
+  .kz-opwrap { position: relative; align-self: stretch; flex: none; width: 64px; display: flex; align-items: center; padding: 0 8px; }
+  .kz-opwrap::after { content: ""; position: absolute; left: 0; bottom: 0; height: 2px;
+    width: var(--fill, 100%); background: hsl(var(--muted-foreground) / .5); pointer-events: none; }
+  .kz-opwrap.kz-scrubbing::after, .kz-cfield:focus-within .kz-opwrap::after { background: hsl(var(--ring)); }
+  .kz-opwrap .kz-opac { flex: 1; min-width: 0; background: none; border: none; color: hsl(var(--foreground));
+    font: inherit; padding: 0; text-align: left; cursor: ew-resize; font-variant-numeric: tabular-nums; }
+  .kz-opwrap .kz-opac:focus { outline: none; cursor: text; }
+  .kz-opwrap .kz-sfx { color: hsl(var(--muted-foreground)); font-size: 11px; }
+  .kz-picker { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; border: none; }
+  .kz-add {
+    display: flex; align-items: center; gap: 7px; width: 100%; height: 30px; padding: 0 10px;
+    background: none; border: 1px dashed hsl(var(--border)); border-radius: calc(var(--radius) - 2px);
+    color: hsl(var(--muted-foreground)); font: inherit; cursor: pointer; text-align: left;
+  }
+  .kz-add:hover { border-color: hsl(var(--ring)); color: hsl(var(--foreground)); }
+  .kz-add .kz-plus { font-size: 15px; line-height: 1; }
+  .kz-rm { width: 22px; height: 22px; flex: none; display: inline-flex; align-items: center; justify-content: center;
+    background: none; border: none; border-radius: 4px; color: hsl(var(--muted-foreground)); font-size: 16px; cursor: pointer; }
+  .kz-rm:hover { background: hsl(var(--secondary)); color: hsl(var(--foreground)); }
+
+  .kz-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+
+  .kz-btnrow { display: flex; gap: 8px; align-items: center; }
+  .kz-btn { flex: 1; height: 32px; background: hsl(var(--secondary)); color: hsl(var(--secondary-foreground));
+    border: 1px solid transparent; border-radius: calc(var(--radius) - 2px); padding: 0 10px; font: inherit; cursor: pointer; }
+  .kz-btn:hover { border-color: hsl(var(--ring)); }
+  .kz-btn.kz-primary { background: hsl(var(--primary)); border-color: hsl(var(--primary)); color: hsl(var(--primary-foreground)); font-weight: 600; }
+  .kz-scale { width: auto; flex: 0 0 auto; }
+  .kz-mini { background: none; border: none; color: hsl(var(--muted-foreground)); font: inherit; cursor: pointer; padding: 2px 4px; }
+  .kz-mini:hover { color: hsl(var(--foreground)); }
+
+  /* stage */
+  .kz-stage {
+    position: relative; display: flex; align-items: center; justify-content: center; padding: 40px; overflow: auto;
+    background:
+      linear-gradient(45deg, hsl(240 6% 9%) 25%, transparent 25%),
+      linear-gradient(-45deg, hsl(240 6% 9%) 25%, transparent 25%),
+      linear-gradient(45deg, transparent 75%, hsl(240 6% 9%) 75%),
+      linear-gradient(-45deg, transparent 75%, hsl(240 6% 9%) 75%);
+    background-size: 22px 22px; background-position: 0 0, 0 11px, 11px -11px, -11px 0;
+    background-color: hsl(240 8% 6%);
+  }
+  .kz-fill { position: absolute; inset: 0; z-index: 0; pointer-events: none; }
+  .kz-mount { position: relative; z-index: 1; line-height: 0; }
+  .kz-mount svg, .kz-mount canvas { display: block; max-width: 100%; }`;
+
+  let stylesInjected = false;
+  function injectStyles() {
+    if (stylesInjected) return;
+    stylesInjected = true;
+    document.documentElement.classList.add("kz-root", "dark");
+    const style = document.createElement("style");
+    style.textContent = TOKEN_CSS + COMPONENT_CSS;
+    document.head.appendChild(style);
+  }
+
+  function resolveTokens() {
+    const cs = getComputedStyle(document.documentElement);
+    const t = k => `hsl(${cs.getPropertyValue("--" + k).trim()})`;
+    return {
+      color: {
+        background: t("background"), foreground: t("foreground"),
+        muted: t("muted"), mutedForeground: t("muted-foreground"),
+        border: t("border"), primary: t("primary"), secondary: t("secondary"),
+      },
+      radius: cs.getPropertyValue("--radius").trim(),
+    };
+  }
+
+  // ------------------------------------------------------------- seeded RNG
+  function mulberry32(a) {
+    return function () {
+      a |= 0; a = (a + 0x6d2b79f5) | 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  function makeRandom(seed) {
+    seed = seed >>> 0;
+    const next = mulberry32(seed);
+    const random = () => next();
+    random.int = n => Math.floor(next() * n);
+    random.range = (a, b) => a + next() * (b - a);
+    // order-independent spatial hash, keyed by integer coords/salts
+    random.hash = function (...keys) {
+      let h = (seed ^ 0x9e3779b9) >>> 0;
+      for (let i = 0; i < keys.length; i++) {
+        h = (Math.imul(h ^ (keys[i] | 0), 0x01000193) >>> 0);
+        h ^= h >>> 13;
+      }
+      h = Math.imul(h ^ (h >>> 15), 0x85ebca6b) >>> 0;
+      return (h >>> 0) / 4294967296;
+    };
+    return random;
+  }
+
+  // ------------------------------------------------------------- colour utils
+  const isTransparent = v => !v || (typeof v === "string" && (!v.trim() || v.trim().toLowerCase() === "none"));
+  function normHex(v) {
+    v = (v || "").trim();
+    if (/^#?[0-9a-fA-F]{6}$/.test(v)) return (v[0] === "#" ? v : "#" + v).toLowerCase();
+    return null;
+  }
+  const CHECKER = "repeating-conic-gradient(#9aa0ac 0% 25%, #f5f6f8 0% 50%) 50% / 12px 12px";
+  function colorToCss(c) {
+    if (!c || isTransparent(c.hex)) return null;
+    const h = normHex(c.hex) || c.hex;
+    if (c.opacity == null || c.opacity >= 1) return h;
+    const n = parseInt(h.slice(1), 16);
+    return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${Math.round(c.opacity * 1000) / 1000})`;
+  }
+
+  // ------------------------------------------------------------- field display
+  function fieldDecimals(field) {
+    const step = field.format === "percent" ? (field.step || 1) * 100 : (field.step || 1);
+    const s = String(step);
+    return s.includes(".") ? s.split(".")[1].length : 0;
+  }
+  function toDisplay(field, v) {
+    let d = field.format === "percent" ? v * 100 : v;
+    const dec = fieldDecimals(field);
+    return dec ? +d.toFixed(dec) : Math.round(d);
+  }
+  const fromDisplay = (field, d) => (field.format === "percent" ? d / 100 : d);
+  const fieldUnit = field => field.unit || (field.format === "percent" ? "%" : "");
+
+  // ------------------------------------------------------------- state store
+  function resolveDefaults(settings) {
+    const state = {};
+    for (const key in settings) {
+      const f = settings[key];
+      state[key] = f.default !== undefined ? clone(f.default) : null;
+    }
+    return state;
+  }
+  const clone = v => (v && typeof v === "object" ? JSON.parse(JSON.stringify(v)) : v);
+
+  function createStore(defaults) {
+    let state = clone(defaults);
+    const subs = new Set();
+    const emit = key => subs.forEach(fn => fn(state, key));
+    return {
+      get: () => state,
+      set(key, value) { state = Object.assign({}, state, { [key]: value }); emit(key); },
+      replace(next) { state = Object.assign({}, clone(defaults), next); emit(null); },
+      subscribe(fn) { subs.add(fn); return () => subs.delete(fn); },
+      serialise: () => JSON.stringify(state, null, 2),
+      deserialise(json) { try { this.replace(JSON.parse(json)); return true; } catch (e) { return false; } },
+    };
+  }
+
+  // ------------------------------------------------------------- drag-to-scrub
+  function attachScrub(input, container, handle, getV, setV, getFill) {
+    const refreshFill = () => { const f = getFill(); if (f != null) container.style.setProperty("--fill", f * 100 + "%"); };
+    refreshFill();
+    handle.addEventListener("pointerdown", e => {
+      if (e.button !== 0) return;
+      const startX = e.clientX, startV = getV();
+      let scrubbing = false;
+      const move = ev => {
+        const dx = ev.clientX - startX;
+        if (!scrubbing) { if (Math.abs(dx) < 3) return; scrubbing = true; container.classList.add("kz-scrubbing"); document.body.classList.add("kz-scrubbing"); input.blur(); }
+        ev.preventDefault();
+        setV(startV, dx);
+        refreshFill();
+      };
+      const up = () => {
+        window.removeEventListener("pointermove", move);
+        window.removeEventListener("pointerup", up);
+        container.classList.remove("kz-scrubbing"); document.body.classList.remove("kz-scrubbing");
+      };
+      window.addEventListener("pointermove", move);
+      window.addEventListener("pointerup", up);
+    });
+    return refreshFill;
+  }
+
+  // ------------------------------------------------------------- field renderers
+  // Each returns { node, refresh } — refresh() pulls the value back from the store.
+  function renderNumeric(key, field, store, isSlider) {
+    const wrap = document.createElement("div");
+    if (field.col) wrap.dataset.col = field.col;
+    const label = document.createElement("label"); label.className = "kz-flabel"; label.textContent = field.label || key;
+    const fieldEl = document.createElement("div"); fieldEl.className = "kz-field" + (isSlider ? " kz-scrub" : "");
+    const input = document.createElement("input"); input.type = "number"; input.className = "kz-num";
+    input.min = field.format === "percent" ? field.min * 100 : field.min;
+    input.max = field.format === "percent" ? field.max * 100 : field.max;
+    input.step = field.format === "percent" ? (field.step || 1) * 100 : (field.step || 1);
+    const sfx = fieldUnit(field);
+    fieldEl.appendChild(input);
+    if (sfx) { const s = document.createElement("span"); s.className = "kz-sfx"; s.textContent = sfx; fieldEl.appendChild(s); }
+    wrap.appendChild(label); wrap.appendChild(fieldEl);
+
+    const setFromDisplay = d => {
+      let v = fromDisplay(field, d);
+      v = Math.max(field.min, Math.min(field.max, v));
+      store.set(key, v);
+    };
+    const fillFrac = () => (store.get()[key] - field.min) / (field.max - field.min);
+
+    input.addEventListener("input", () => { if (input.value !== "") setFromDisplay(+input.value); });
+    if (isSlider) {
+      const step = field.step || 1;
+      const dec = String(step).includes(".") ? String(step).split(".")[1].length : 0;
+      attachScrub(input, fieldEl, fieldEl,
+        () => store.get()[key],
+        (startV, dx) => {
+          const pxStep = (field.max - field.min) / 260;
+          let v = Math.round((startV + dx * pxStep) / step) * step;
+          v = Math.max(field.min, Math.min(field.max, v));
+          v = dec ? +v.toFixed(dec) : v;
+          store.set(key, v);
+          input.value = toDisplay(field, v);
+        },
+        fillFrac);
+    }
+    const refresh = () => {
+      if (document.activeElement !== input) input.value = toDisplay(field, store.get()[key]);
+      if (isSlider) fieldEl.style.setProperty("--fill", Math.max(0, Math.min(1, fillFrac())) * 100 + "%");
+    };
+    refresh();
+    return { node: wrap, refresh };
+  }
+
+  function renderSelect(key, field, store) {
+    const wrap = document.createElement("div");
+    if (field.col) wrap.dataset.col = field.col;
+    const label = document.createElement("label"); label.className = "kz-flabel"; label.textContent = field.label || key;
+    const sel = document.createElement("select"); sel.className = "kz-select";
+    (field.options || []).forEach(opt => {
+      const o = document.createElement("option");
+      const value = typeof opt === "object" ? opt.value : opt;
+      o.value = value; o.textContent = typeof opt === "object" ? opt.label : opt;
+      sel.appendChild(o);
+    });
+    sel.addEventListener("change", () => store.set(key, sel.value));
+    wrap.appendChild(label); wrap.appendChild(sel);
+    const refresh = () => { sel.value = store.get()[key]; };
+    refresh();
+    return { node: wrap, refresh };
+  }
+
+  function renderToggle(key, field, store) {
+    const wrap = document.createElement("div"); wrap.className = "kz-toggle";
+    const label = document.createElement("span"); label.className = "kz-tlabel"; label.textContent = field.label || key;
+    const sw = document.createElement("button"); sw.type = "button"; sw.className = "kz-switch";
+    sw.addEventListener("click", () => store.set(key, !store.get()[key]));
+    wrap.appendChild(label); wrap.appendChild(sw);
+    const refresh = () => sw.setAttribute("aria-checked", String(!!store.get()[key]));
+    refresh();
+    return { node: wrap, refresh };
+  }
+
+  function renderText(key, field, store) {
+    const wrap = document.createElement("div");
+    const label = document.createElement("label"); label.className = "kz-flabel"; label.textContent = field.label || key;
+    const fieldEl = document.createElement("div"); fieldEl.className = "kz-field";
+    const input = document.createElement("input"); input.type = "text";
+    input.addEventListener("input", () => store.set(key, input.value));
+    fieldEl.appendChild(input); wrap.appendChild(label); wrap.appendChild(fieldEl);
+    const refresh = () => { if (document.activeElement !== input) input.value = store.get()[key] || ""; };
+    refresh();
+    return { node: wrap, refresh };
+  }
+
+  function renderColor(key, field, store) {
+    const row = document.createElement("div"); row.className = "kz-color-row";
+    const clabel = document.createElement("span"); clabel.className = "kz-flabel"; clabel.style.margin = "0"; clabel.style.width = "84px"; clabel.style.flex = "none"; clabel.textContent = field.label || key;
+
+    const cfield = document.createElement("div"); cfield.className = "kz-cfield";
+    const swatch = document.createElement("button"); swatch.type = "button"; swatch.className = "kz-swatch";
+    const hex = document.createElement("input"); hex.type = "text"; hex.className = "kz-hex"; hex.placeholder = "None";
+    const divline = document.createElement("span"); divline.className = "kz-divline";
+    const opwrap = document.createElement("span"); opwrap.className = "kz-opwrap";
+    const opac = document.createElement("input"); opac.type = "number"; opac.className = "kz-num kz-opac"; opac.min = 0; opac.max = 100;
+    const opsfx = document.createElement("span"); opsfx.className = "kz-sfx"; opsfx.textContent = "%";
+    const picker = document.createElement("input"); picker.type = "color"; picker.className = "kz-picker"; picker.value = "#ffffff";
+    opwrap.appendChild(opac); opwrap.appendChild(opsfx);
+    cfield.append(swatch, hex, divline, opwrap, picker);
+
+    // optional colour: add / remove affordance
+    const addBtn = document.createElement("button"); addBtn.type = "button"; addBtn.className = "kz-add";
+    addBtn.innerHTML = `<span class="kz-plus">+</span>${field.addLabel || ("Add " + (field.label || key).toLowerCase())}`;
+    const rm = document.createElement("button"); rm.type = "button"; rm.className = "kz-rm"; rm.textContent = "−"; rm.title = "Remove";
+
+    const get = () => store.get()[key];
+    const present = () => { const c = get(); return c && !isTransparent(c.hex); };
+    const setColor = patch => { const c = get() || { hex: "#ffffff", opacity: 1 }; store.set(key, Object.assign({}, c, patch)); };
+
+    swatch.addEventListener("click", () => picker.click());
+    picker.addEventListener("input", () => setColor({ hex: picker.value }));
+    hex.addEventListener("input", () => {
+      const n = normHex(hex.value);
+      if (isTransparent(hex.value)) store.set(key, field.optional ? null : { hex: null, opacity: (get() && get().opacity) ?? 1 });
+      else setColor({ hex: n || hex.value });
+    });
+    opac.addEventListener("input", () => { if (opac.value !== "") setColor({ opacity: Math.max(0, Math.min(1, +opac.value / 100)) }); });
+    attachScrub(opac, opwrap, opwrap,
+      () => (get() ? (get().opacity ?? 1) : 1),
+      (startV, dx) => { let v = Math.max(0, Math.min(1, startV + dx / 260)); v = Math.round(v * 100) / 100; setColor({ opacity: v }); opac.value = Math.round(v * 100); },
+      () => (get() ? (get().opacity ?? 1) : 1));
+    addBtn.addEventListener("click", () => store.set(key, { hex: picker.value || "#ffffff", opacity: 1 }));
+    rm.addEventListener("click", () => store.set(key, null));
+
+    if (field.optional) { row.append(clabel, cfield, rm); }
+    else { row.append(clabel, cfield); }
+
+    const container = document.createElement("div");
+    container.append(row);
+    if (field.optional) container.append(addBtn);
+
+    const refresh = () => {
+      const c = get();
+      const transparent = !present();
+      swatch.style.background = transparent ? CHECKER : (normHex(c.hex) || c.hex);
+      if (document.activeElement !== hex) hex.value = transparent ? "" : (c.hex || "");
+      const op = c ? (c.opacity ?? 1) : 1;
+      if (document.activeElement !== opac) opac.value = Math.round(op * 100);
+      opwrap.style.setProperty("--fill", Math.round(op * 100) + "%");
+      if (field.optional) {
+        const has = c !== null && c !== undefined;
+        row.style.display = has ? "flex" : "none";
+        addBtn.style.display = has ? "none" : "flex";
+      }
+    };
+    refresh();
+    return { node: container, refresh };
+  }
+
+  function renderField(key, field, store) {
+    switch (field.type) {
+      case "slider": return renderNumeric(key, field, store, true);
+      case "number": return renderNumeric(key, field, store, false);
+      case "select": return renderSelect(key, field, store);
+      case "color": return renderColor(key, field, store);
+      case "toggle": return renderToggle(key, field, store);
+      case "text": return renderText(key, field, store);
+      default: { const d = document.createElement("div"); d.textContent = "Unsupported field: " + field.type; return { node: d, refresh() {} }; }
+    }
+  }
+
+  // ------------------------------------------------------------- panel
+  function inferGroups(settings, declared) {
+    if (declared && declared.length) return declared;
+    const seen = [];
+    for (const k in settings) { const g = settings[k].group || "Settings"; if (!seen.includes(g)) seen.push(g); }
+    return seen;
+  }
+
+  function buildPanel(panel, tool, store, pair) {
+    const settings = tool.settings || {};
+    const groups = inferGroups(settings, tool.groups);
+    const byKey = {};
+    groups.forEach(group => {
+      const keys = Object.keys(settings).filter(k => (settings[k].group || "Settings") === group);
+      if (!keys.length) return;
+      const section = document.createElement("div"); section.className = "kz-section";
+      const head = document.createElement("div"); head.className = "kz-sechead";
+      const h2 = document.createElement("h2"); h2.textContent = group; head.appendChild(h2);
+      section.appendChild(head);
+
+      // Optionally pack consecutive 'half' fields into two-up rows.
+      let i = 0;
+      while (i < keys.length) {
+        const key = keys[i], field = settings[key];
+        const r = renderField(key, field, store); byKey[key] = r.refresh;
+        if (pair && field.col === "half" && i + 1 < keys.length && settings[keys[i + 1]].col === "half") {
+          const k2 = keys[i + 1];
+          const r2 = renderField(k2, settings[k2], store); byKey[k2] = r2.refresh;
+          const pairEl = document.createElement("div"); pairEl.className = "kz-pair";
+          pairEl.append(r.node, r2.node); section.appendChild(pairEl); i += 2;
+        } else { section.appendChild(r.node); i += 1; }
+      }
+      panel.appendChild(section);
+    });
+    // refresh a field's DOM whenever its own value changes, or all on a full replace
+    store.subscribe((_s, changedKey) => {
+      if (changedKey === null) Object.keys(byKey).forEach(k => byKey[k]());
+      else if (byKey[changedKey]) byKey[changedKey]();
+    });
+    return byKey;
+  }
+
+  // ------------------------------------------------------------- preview + ctx
+  function sizeFromSvg(el) {
+    const w = +el.getAttribute("width"), h = +el.getAttribute("height");
+    return { width: w || 0, height: h || 0 };
+  }
+  function makeCtx(tool, state, mode) {
+    const seed = (state.seed != null ? state.seed : (tool.seed != null ? tool.seed : 1)) >>> 0;
+    let uid = 0;
+    return {
+      tokens: resolveTokens(),
+      random: makeRandom(seed),
+      seed, mode,
+      uid: (name) => `${tool.id}-${name || "id"}-${uid++}`,
+      svg: (tag, attrs) => { const el = document.createElementNS(SVG_NS, tag); if (attrs) for (const k in attrs) el.setAttribute(k, attrs[k]); return el; },
+      colorToCss,
+    };
+  }
+
+  function createPreview(mount, tool, store, mode) {
+    let current = null;
+    function render() {
+      const state = store.get();
+      const ctx = makeCtx(tool, state, mode);
+      let el;
+      if (tool.render === "canvas") {
+        const size = tool.size ? tool.size(state) : { width: 600, height: 600 };
+        ctx.width = size.width; ctx.height = size.height;
+        const canvas = document.createElement("canvas"); canvas.width = size.width; canvas.height = size.height;
+        ctx.canvas = canvas; ctx.ctx2d = canvas.getContext("2d");
+        tool.build(state, ctx);
+        el = canvas;
+      } else {
+        el = tool.build(state, ctx);
+        const s = tool.size ? tool.size(state) : sizeFromSvg(el);
+        ctx.width = s.width; ctx.height = s.height;
+      }
+      mount.replaceChildren(el);
+      current = el;
+      return current;
+    }
+    return { render, get current() { return current; }, makeCtxForExport: () => makeCtx(tool, store.get(), mode) };
+  }
+
+  // ------------------------------------------------------------- export
+  function svgString(el) {
+    return '<?xml version="1.0" encoding="UTF-8"?>\n' + new XMLSerializer().serializeToString(el.cloneNode(true));
+  }
+  function download(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = filename; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+  function rasterise(el, scale, cb) {
+    const str = svgString(el);
+    const url = URL.createObjectURL(new Blob([str], { type: "image/svg+xml;charset=utf-8" }));
+    const img = new Image();
+    img.onload = () => {
+      const w = (+el.getAttribute("width") || el.viewBox.baseVal.width) * scale;
+      const h = (+el.getAttribute("height") || el.viewBox.baseVal.height) * scale;
+      const canvas = document.createElement("canvas"); canvas.width = w; canvas.height = h;
+      canvas.getContext("2d").drawImage(img, 0, 0, w, h);
+      canvas.toBlob(b => { cb(b); URL.revokeObjectURL(url); }, "image/png");
+    };
+    img.src = url;
+  }
+  function exporter(tool, preview) {
+    const isCanvas = tool.render === "canvas";
+    return {
+      downloadSVG() { if (isCanvas) return; download(new Blob([svgString(preview.current)], { type: "image/svg+xml" }), `${tool.id}.svg`); },
+      copySVG() { if (isCanvas) return; return navigator.clipboard.writeText(svgString(preview.current)); },
+      downloadPNG(scale) {
+        scale = scale || 2;
+        if (isCanvas) { preview.current.toBlob(b => download(b, `${tool.id}@${scale}x.png`), "image/png"); return; }
+        rasterise(preview.current, scale, b => download(b, `${tool.id}@${scale}x.png`));
+      },
+      copyPNG(scale) {
+        scale = scale || 2;
+        const put = b => navigator.clipboard.write([new ClipboardItem({ "image/png": b })]).catch(() => {});
+        if (isCanvas) { preview.current.toBlob(put, "image/png"); return; }
+        rasterise(preview.current, scale, put);
+      },
+    };
+  }
+
+  // ------------------------------------------------------------- standalone shell
+  function bootStandalone(tool) {
+    injectStyles();
+    const defaults = resolveDefaults(tool.settings);
+    const store = createStore(defaults);
+
+    const app = document.createElement("div"); app.className = "kz-app";
+    const panel = document.createElement("aside"); panel.className = "kz-panel";
+    const head = document.createElement("div"); head.className = "kz-head";
+    head.innerHTML = `<h1>${tool.name || tool.id}</h1>` + (tool.tagline ? `<div class="kz-sub">${tool.tagline}</div>` : "");
+    panel.appendChild(head);
+
+    buildPanel(panel, tool, store, /* pair */ false); // standalone = single column
+
+    // export + presets section
+    const exportSection = document.createElement("div"); exportSection.className = "kz-section";
+    const exHead = document.createElement("div"); exHead.className = "kz-sechead";
+    exHead.innerHTML = "<h2>Export</h2>"; exportSection.appendChild(exHead);
+    const formats = tool.exportFormats || ["svg", "png"];
+    const row = document.createElement("div"); row.className = "kz-btnrow";
+    const scaleSel = document.createElement("select"); scaleSel.className = "kz-select kz-scale";
+    [1, 2, 4].forEach(s => { const o = document.createElement("option"); o.value = s; o.textContent = s + "×"; if (s === 2) o.selected = true; scaleSel.appendChild(o); });
+
+    const stage = document.createElement("main"); stage.className = "kz-stage";
+    const fill = document.createElement("div"); fill.className = "kz-fill";
+    const mount = document.createElement("div"); mount.className = "kz-mount";
+    stage.append(fill, mount);
+
+    const preview = createPreview(mount, tool, store, "standalone");
+    const ex = exporter(tool, preview);
+
+    if (formats.includes("svg")) {
+      const b = document.createElement("button"); b.className = "kz-btn"; b.textContent = "SVG";
+      b.addEventListener("click", () => ex.downloadSVG()); row.appendChild(b);
+    }
+    if (formats.includes("png")) {
+      const b = document.createElement("button"); b.className = "kz-btn kz-primary"; b.textContent = "PNG";
+      b.addEventListener("click", () => ex.downloadPNG(+scaleSel.value)); row.appendChild(b);
+      row.appendChild(scaleSel);
+    }
+    exportSection.appendChild(row);
+
+    const copyRow = document.createElement("div"); copyRow.className = "kz-btnrow"; copyRow.style.marginTop = "8px";
+    if (formats.includes("svg")) { const c = document.createElement("button"); c.className = "kz-mini"; c.textContent = "Copy SVG"; c.addEventListener("click", () => ex.copySVG()); copyRow.appendChild(c); }
+    if (formats.includes("png")) { const c = document.createElement("button"); c.className = "kz-mini"; c.textContent = "Copy PNG"; c.addEventListener("click", () => ex.copyPNG(+scaleSel.value)); copyRow.appendChild(c); }
+    const cj = document.createElement("button"); cj.className = "kz-mini"; cj.textContent = "Copy state"; cj.addEventListener("click", () => navigator.clipboard.writeText(store.serialise())); copyRow.appendChild(cj);
+    const lj = document.createElement("button"); lj.className = "kz-mini"; lj.textContent = "Load state"; lj.addEventListener("click", () => { const j = prompt("Paste state JSON"); if (j) store.deserialise(j); }); copyRow.appendChild(lj);
+    exportSection.appendChild(copyRow);
+    panel.appendChild(exportSection);
+
+    app.append(panel, stage);
+    document.body.appendChild(app);
+
+    store.subscribe(() => preview.render());
+    preview.render();
+  }
+
+  // ------------------------------------------------------------- framed shell (lean; host = Phase 4)
+  function bootFramed(tool) {
+    injectStyles();
+    const defaults = resolveDefaults(tool.settings);
+    const store = createStore(defaults);
+    document.body.style.margin = "0";
+    const stage = document.createElement("main"); stage.className = "kz-stage"; stage.style.height = "100vh";
+    const fill = document.createElement("div"); fill.className = "kz-fill";
+    const mount = document.createElement("div"); mount.className = "kz-mount";
+    stage.append(fill, mount); document.body.appendChild(stage);
+
+    const preview = createPreview(mount, tool, store, "framed");
+    const ex = exporter(tool, preview);
+    store.subscribe(() => preview.render());
+
+    const post = msg => parent.postMessage(Object.assign({ v: PROTOCOL }, msg), "*");
+    function schemaForWire() {
+      const out = {};
+      for (const k in tool.settings) {
+        const f = tool.settings[k]; const o = {};
+        for (const p in f) if (typeof f[p] !== "function") o[p] = f[p];
+        out[k] = o;
+      }
+      return out;
+    }
+    window.addEventListener("message", e => {
+      const d = e.data; if (!d || d.v !== PROTOCOL) return;
+      if (d.type === "kazam/state") store.replace(d.state);
+      else if (d.type === "kazam/export") {
+        if (d.format === "svg") post({ type: "kazam/export-result", requestId: d.requestId, format: "svg", ok: true, payload: { kind: "text", text: svgString(preview.current) } });
+        else rasterise(preview.current, d.scale || 2, b => post({ type: "kazam/export-result", requestId: d.requestId, format: "png", ok: true, payload: { kind: "blob", blob: b } }));
+      }
+    });
+    preview.render();
+    post({ type: "kazam/ready", tool: { id: tool.id, name: tool.name, render: tool.render, duration: tool.duration || 0, exportFormats: tool.exportFormats || ["svg", "png"] }, schema: schemaForWire(), groups: tool.groups || null, state: store.get() });
+  }
+
+  // ------------------------------------------------------------- entry
+  function defineTool(tool) {
+    if (!tool || !tool.id || typeof tool.build !== "function") {
+      throw new Error("Kazam.defineTool: requires { id, build, settings }");
+    }
+    const framed = window.self !== window.top;
+    const boot = () => (framed ? bootFramed(tool) : bootStandalone(tool));
+    if (document.body) boot();
+    else window.addEventListener("DOMContentLoaded", boot);
+    return tool;
+  }
+
+  window.Kazam = { defineTool, version: PROTOCOL };
+})();
