@@ -718,7 +718,7 @@
       tokens: resolveTokens(),
       random: makeRandom(streamSeed, baseSeed),
       seed: baseSeed, mode,
-      t: opts.t || 0, frame: opts.frameIndex || 0, duration: tool.duration || 0, fps: tool.fps || 30,
+      t: opts.t || 0, frame: opts.frameIndex || 0, duration: opts.duration != null ? opts.duration : (tool.duration || 0), fps: tool.fps || 30,
       live: !!opts.live,   // true only during continuous rAF playback (not export / scrub) — gate audio on this
       uid: (name) => `${tool.id}-${name || "id"}-${uid++}`,
       svg: (tag, attrs) => { const el = document.createElementNS(SVG_NS, tag); if (attrs) for (const k in attrs) el.setAttribute(k, attrs[k]); return el; },
@@ -729,7 +729,15 @@
   function createPreview(mount, tool, store, mode) {
     const animated = (tool.duration || 0) > 0 && typeof tool.frame === "function";
     const fps = tool.fps || 30;
-    const totalFrames = Math.max(1, Math.round((tool.duration || 0) * fps));
+    // Frame count is normally duration×fps, but a tool may define frameCount(state)
+    // to size the timeline dynamically (e.g. a physics sim that runs until it settles).
+    function computeFrames() {
+      if (typeof tool.frameCount === "function") {
+        try { const n = tool.frameCount(resolveState(store.get())); if (n > 0) return Math.max(1, Math.round(n)); } catch (e) {}
+      }
+      return Math.max(1, Math.round((tool.duration || 0) * fps));
+    }
+    let totalFrames = computeFrames();
     const sub = new Set();               // frame listeners (transport sync)
     const imageCache = new Map();        // dataURL src -> ImageBitmap | null(decoding)
     let current = null, canvas = null, ctx2d = null, cw = 0, ch = 0;
@@ -766,7 +774,7 @@
     function renderAt(idx, live) {
       const state = resolveState(store.get());
       const t = animated ? idx / fps : 0;
-      const ctx = makeCtx(tool, state, mode, { frameIndex: idx, t, animated, live: !!live });
+      const ctx = makeCtx(tool, state, mode, { frameIndex: idx, t, animated, live: !!live, duration: animated ? totalFrames / fps : 0 });
       if (tool.render === "canvas") {
         const s = sizeOf(state);
         if (!canvas) { canvas = document.createElement("canvas"); ctx2d = canvas.getContext("2d"); }
@@ -782,7 +790,7 @@
       sub.forEach(fn => fn(idx, totalFrames, t));
       return current;
     }
-    function render() { return renderAt(animated ? Math.floor(pos) % totalFrames : 0); }
+    function render() { totalFrames = computeFrames(); return renderAt(animated ? Math.floor(pos) % totalFrames : 0); }
     function tick(ts) {
       if (!playing) return;
       if (!lastTs) lastTs = ts;
@@ -796,7 +804,7 @@
 
     return {
       render, renderAt, get current() { return current; },
-      animated, totalFrames, fps,
+      animated, get totalFrames() { return totalFrames; }, fps,
       play, pause, seek, onFrame(fn) { sub.add(fn); }, get playing() { return playing; },
     };
   }
@@ -899,9 +907,12 @@
       const k = indices[i], key = prev * 256 + k, got = dict.get(key);
       if (got !== undefined) { prev = got; continue; }
       put(prev, codeSize);
-      dict.set(key, next++);
-      if (next === (1 << codeSize) && codeSize < 12) codeSize++;
+      // Grow the code size BEFORE assigning the new code (and reset the table when
+      // full) — matching the order a standard GIF decoder uses. Bumping after the
+      // assignment, as before, desynced the bit width one code early at each 2^n
+      // boundary, so decoders garbled everything past the first ~512 codes.
       if (next === 4096) { put(clearCode, codeSize); dict = new Map(); next = eoiCode + 1; codeSize = minCode + 1; }
+      else { if (next >= (1 << codeSize) && codeSize < 12) codeSize++; dict.set(key, next++); }
       prev = k;
     }
     put(prev, codeSize); put(eoiCode, codeSize);
@@ -988,8 +999,8 @@
     const scrub = document.createElement("input"); scrub.type = "range"; scrub.className = "kz-tscrub";
     scrub.min = 0; scrub.max = player.totalFrames - 1; scrub.step = 1; scrub.value = 0;
     const time = document.createElement("span"); time.className = "kz-ttime";
-    const dur = (player.totalFrames - 1) / player.fps;
-    time.textContent = "0.00 / " + dur.toFixed(2) + "s";
+    const durOf = total => (total - 1) / player.fps;
+    time.textContent = "0.00 / " + durOf(player.totalFrames).toFixed(2) + "s";
     bar.append(btn, scrub, time);
     btn.addEventListener("click", () => {
       if (player.playing) { player.pause(); btn.innerHTML = PLAY_SVG; }
@@ -997,8 +1008,9 @@
     });
     scrub.addEventListener("input", () => { player.seek(+scrub.value); btn.innerHTML = PLAY_SVG; });
     player.onFrame((idx, total, t) => {
+      if (+scrub.max !== total - 1) scrub.max = total - 1;   // frame count can change with state (dynamic timelines)
       if (document.activeElement !== scrub) scrub.value = idx;
-      time.textContent = t.toFixed(2) + " / " + dur.toFixed(2) + "s";
+      time.textContent = t.toFixed(2) + " / " + durOf(total).toFixed(2) + "s";
     });
     stage.appendChild(bar);
     return { autoplay() { player.play(); btn.innerHTML = PAUSE_SVG; } };

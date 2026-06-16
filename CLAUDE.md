@@ -114,9 +114,16 @@ remain reserved — see *Non-settings state* below.
 
 **Animation.** A tool with `duration > 0` (seconds) and a `frame(state, t, ctx)` function is
 animated: the runtime runs a `requestAnimationFrame` loop, shows a transport (play/scrub), and
-exports GIF + WebM. `ctx` gains `t`, `frame` (index), `duration`, `fps`. Determinism holds
-per-frame because `ctx.random()` reseeds per frame while `ctx.random.hash(...)` stays keyed to
-the base seed — so put motion in `t` and per-entity randomness in `hash`.
+exports GIF + WebM. `ctx` gains `t`, `frame` (index), `duration`, `fps`, and `live` (true only
+during continuous playback — gate audio/side-effects on it, never during export or scrubbing).
+Determinism holds per-frame because `ctx.random()` reseeds per frame while `ctx.random.hash(...)`
+stays keyed to the base seed — so put motion in `t` and per-entity randomness in `hash`.
+
+A tool with no fixed length can define `frameCount(state) → integer` to size the timeline
+**dynamically**: the runtime uses it (recomputed on state change) for the transport range, the
+exported frame count, and `ctx.duration` (= `frameCount/fps`). `duration` then only acts as a
+hint that the tool is animated. Letterfall uses this to run until its physics settle. Set
+`autoplay: false` on the tool to open paused instead of auto-playing.
 
 ### `ctx` — what the runtime hands the tool
 
@@ -290,6 +297,12 @@ authoring step, never required to run; see open question below.)
 - **Animation** — `duration` + `frame(state, t, ctx)`, transport, deterministic per-frame RNG,
   and **GIF (self-written encoder) + WebM (MediaRecorder)** export. Demo: `tools/orbits.html`.
 - **Image upload** — the `image` asset field. Demo: `tools/image-dither.html`.
+- **Swatches + preset launcher** — the `swatches` field (editable colour chips) and a `select`
+  with `presets`/`writes` that seeds another field. Demo: `tools/pixelator.html`.
+- **Dynamic timelines** — `frameCount(state)` sizes an animation to its content. Demo:
+  `tools/letterfall.html`, a physics-driven poster generator (per-glyph outline + SAT collision)
+  that precomputes its whole trajectory once per state (seeded, never `Math.random`) and runs
+  until every letter settles.
 
 ### Not yet built (future)
 

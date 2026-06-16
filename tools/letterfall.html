@@ -1,0 +1,592 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Letterfall</title>
+<script src="../frame/kazam.js"></script>
+</head>
+<body>
+<script>
+// Letterfall — a physics-driven poster generator. Letters drop from the top,
+// tumble, bounce, and settle into a pile using real per-glyph collision
+// (outline extraction + SAT). Animated: scrub the transport, export PNG/GIF/WebM.
+//
+// Determinism: the physics simulation is stateful (each tick depends on the
+// last), which doesn't fit Kazam's pure frame(state, t) model directly. So the
+// whole trajectory is precomputed once per state, seeded from ctx.seed (never
+// Math.random), and frame() just indexes into it — identical state+seed → identical
+// poster, in preview and in every exported frame.
+
+// ─── Seeded PRNG (mulberry32) ───────────────────────────────────────
+function mulberry32(a) {
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function getFontStack(fontFamily) {
+  switch (fontFamily) {
+    case 'serif': return 'Georgia, "Times New Roman", serif';
+    case 'mono':  return 'ui-monospace, "SF Mono", Menlo, monospace';
+    case 'sans':
+    default:      return 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
+  }
+}
+
+// ─── Outline extraction (offscreen canvas → sampled convex polygon) ──
+const shapeCache = new Map();
+
+function extractCharacterShape(char, fontStack, fontWeight, fontSize) {
+  const cacheKey = `${char}-${fontStack}-${fontWeight}-${fontSize}`;
+  const cached = shapeCache.get(cacheKey);
+  if (cached) return cached;
+
+  const padding = 8;
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d');
+
+  ctx.font = `${fontWeight} ${fontSize}px ${fontStack}`;
+  const metrics = ctx.measureText(char);
+
+  const left = Math.ceil(Math.abs(metrics.actualBoundingBoxLeft));
+  const right = Math.ceil(metrics.actualBoundingBoxRight);
+  const ascent = Math.ceil(metrics.actualBoundingBoxAscent);
+  const descent = Math.ceil(metrics.actualBoundingBoxDescent);
+  const advance = metrics.width;
+
+  const charWidth = left + right;
+  const charHeight = ascent + descent;
+
+  const boxShape = (w, h, asc, lb) => ({
+    convexParts: [[
+      { x: 0, y: 0 }, { x: w, y: 0 }, { x: w, y: h }, { x: 0, y: h },
+    ]],
+    boundingRadius: Math.sqrt(w * w + h * h) / 2,
+    centroid: { x: w / 2, y: h / 2 },
+    width: w, height: h, advance: advance || w, ascent: asc, leftBearing: lb,
+  });
+
+  // Space / zero-size glyph
+  if (charWidth <= 0 || charHeight <= 0) {
+    const fw = advance || fontSize * 0.3;
+    const fh = fontSize * 0.1;
+    const shape = boxShape(fw, fh, 0, 0);
+    shape.advance = fw;
+    shapeCache.set(cacheKey, shape);
+    return shape;
+  }
+
+  canvas.width = charWidth + padding * 2;
+  canvas.height = charHeight + padding * 2;
+  ctx.font = `${fontWeight} ${fontSize}px ${fontStack}`;
+  ctx.fillStyle = 'white';
+  ctx.fillText(char, left + padding, ascent + padding);
+
+  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const w = canvas.width, h = canvas.height;
+  const grid = new Uint8Array(w * h);
+  for (let i = 0; i < grid.length; i++) grid[i] = imageData.data[i * 4 + 3] >= 30 ? 1 : 0;
+
+  const boundaryPoints = [];
+  for (let y = 1; y < h - 1; y++) {
+    for (let x = 1; x < w - 1; x++) {
+      if (grid[y * w + x] === 0) continue;
+      if (grid[(y - 1) * w + x] === 0 || grid[(y + 1) * w + x] === 0 ||
+          grid[y * w + (x - 1)] === 0 || grid[y * w + (x + 1)] === 0) {
+        boundaryPoints.push({ x: x - padding, y: y - padding });
+      }
+    }
+  }
+
+  if (boundaryPoints.length < 3) {
+    const shape = boxShape(charWidth, charHeight, ascent, left);
+    shapeCache.set(cacheKey, shape);
+    return shape;
+  }
+
+  let cx = 0, cy = 0;
+  for (const p of boundaryPoints) { cx += p.x; cy += p.y; }
+  cx /= boundaryPoints.length; cy /= boundaryPoints.length;
+
+  const numSamples = 32;
+  const sampledPoly = [];
+  for (let i = 0; i < numSamples; i++) {
+    const angle = (i / numSamples) * Math.PI * 2;
+    const sectorHalf = Math.PI / numSamples;
+    let bestDist = 0, bestPoint = null;
+    for (const p of boundaryPoints) {
+      const dx = p.x - cx, dy = p.y - cy;
+      const pAngle = Math.atan2(dy, dx);
+      let angleDiff = pAngle - angle;
+      while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+      while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+      if (Math.abs(angleDiff) <= sectorHalf) {
+        const dist = dx * dx + dy * dy;
+        if (dist > bestDist) { bestDist = dist; bestPoint = p; }
+      }
+    }
+    if (bestPoint) {
+      const last = sampledPoly[sampledPoly.length - 1];
+      if (!last || last.x !== bestPoint.x || last.y !== bestPoint.y) sampledPoly.push(bestPoint);
+    }
+  }
+
+  const poly = sampledPoly.length >= 3 ? sampledPoly : convexHull(boundaryPoints);
+  if (poly.length < 3) {
+    const shape = boxShape(charWidth, charHeight, ascent, left);
+    shapeCache.set(cacheKey, shape);
+    return shape;
+  }
+
+  const hull = convexHull(poly);
+  const convexParts = [hull];
+  const hullArea = Math.abs(polygonArea(hull));
+  const polyArea = Math.abs(polygonArea(poly));
+  if (polyArea < hullArea * 0.85 && poly.length >= 6) {
+    const parts = splitConvex(poly);
+    if (parts.length > 1) { convexParts.length = 0; convexParts.push(...parts); }
+  }
+
+  let maxR = 0;
+  for (const p of poly) {
+    const dx = p.x - cx, dy = p.y - cy;
+    const r = Math.sqrt(dx * dx + dy * dy);
+    if (r > maxR) maxR = r;
+  }
+
+  const shape = {
+    convexParts, boundingRadius: maxR, centroid: { x: cx, y: cy },
+    width: charWidth, height: charHeight, advance, ascent, leftBearing: left,
+  };
+  shapeCache.set(cacheKey, shape);
+  return shape;
+}
+
+// ─── Geometry helpers ───────────────────────────────────────────────
+function convexHull(points) {
+  const sorted = [...points].sort((a, b) => a.x - b.x || a.y - b.y);
+  if (sorted.length <= 2) return sorted;
+  const lower = [];
+  for (const p of sorted) {
+    while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], p) <= 0) lower.pop();
+    lower.push(p);
+  }
+  const upper = [];
+  for (let i = sorted.length - 1; i >= 0; i--) {
+    const p = sorted[i];
+    while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], p) <= 0) upper.pop();
+    upper.push(p);
+  }
+  lower.pop(); upper.pop();
+  return [...lower, ...upper];
+}
+function cross(o, a, b) { return (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x); }
+function polygonArea(poly) {
+  let area = 0; const n = poly.length;
+  for (let i = 0; i < n; i++) { const j = (i + 1) % n; area += poly[i].x * poly[j].y; area -= poly[j].x * poly[i].y; }
+  return area / 2;
+}
+function splitConvex(poly) {
+  const n = poly.length;
+  if (n < 4) return [poly];
+  const winding = polygonArea(poly) > 0 ? 1 : -1;
+  for (let i = 0; i < n; i++) {
+    const a = poly[(i - 1 + n) % n], b = poly[i], c = poly[(i + 1) % n];
+    const crossVal = (b.x - a.x) * (c.y - b.y) - (b.y - a.y) * (c.x - b.x);
+    if (crossVal * winding < 0) {
+      const nx = -(c.y - a.y), ny = c.x - a.x;
+      let bestJ = -1, bestProj = -Infinity;
+      for (let j = 0; j < n; j++) {
+        if (j === (i - 1 + n) % n || j === i || j === (i + 1) % n) continue;
+        const proj = (poly[j].x - b.x) * nx + (poly[j].y - b.y) * ny;
+        if (proj > bestProj) { bestProj = proj; bestJ = j; }
+      }
+      if (bestJ >= 0) {
+        const poly1 = [], poly2 = [];
+        let idx = i;
+        do { poly1.push(poly[idx]); idx = (idx + 1) % n; } while (idx !== (bestJ + 1) % n);
+        if (poly1[poly1.length - 1] !== poly[bestJ]) poly1.push(poly[bestJ]);
+        idx = bestJ;
+        do { poly2.push(poly[idx]); idx = (idx + 1) % n; } while (idx !== (i + 1) % n);
+        if (poly2[poly2.length - 1] !== poly[i]) poly2.push(poly[i]);
+        const results = [];
+        if (poly1.length >= 3) { const h1 = convexHull(poly1); if (h1.length >= 3) results.push(h1); }
+        if (poly2.length >= 3) { const h2 = convexHull(poly2); if (h2.length >= 3) results.push(h2); }
+        return results.length > 0 ? results : [convexHull(poly)];
+      }
+    }
+  }
+  return [convexHull(poly)];
+}
+
+// ─── SAT collision ──────────────────────────────────────────────────
+const NO_COLLISION = { colliding: false, penetrationDepth: 0, normal: { x: 0, y: 0 }, contactPoint: { x: 0, y: 0 } };
+
+function transformVertices(vertices, posX, posY, rotationDeg, centroid) {
+  const rad = (rotationDeg * Math.PI) / 180;
+  const cos = Math.cos(rad), sin = Math.sin(rad);
+  return vertices.map(v => {
+    const lx = v.x - centroid.x, ly = v.y - centroid.y;
+    const rx = lx * cos - ly * sin, ry = lx * sin + ly * cos;
+    return { x: rx + posX + centroid.x, y: ry + posY + centroid.y };
+  });
+}
+function broadPhaseCheck(ax, ay, aShape, bx, by, bShape) {
+  const acx = ax + aShape.centroid.x, acy = ay + aShape.centroid.y;
+  const bcx = bx + bShape.centroid.x, bcy = by + bShape.centroid.y;
+  const dx = acx - bcx, dy = acy - bcy;
+  const radiusSum = aShape.boundingRadius + bShape.boundingRadius;
+  return dx * dx + dy * dy <= radiusSum * radiusSum;
+}
+function testCollision(aShape, ax, ay, aRot, bShape, bx, by, bRot) {
+  if (!broadPhaseCheck(ax, ay, aShape, bx, by, bShape)) return NO_COLLISION;
+  let bestResult = null;
+  for (const aPart of aShape.convexParts) {
+    const aWorld = transformVertices(aPart, ax, ay, aRot, aShape.centroid);
+    for (const bPart of bShape.convexParts) {
+      const bWorld = transformVertices(bPart, bx, by, bRot, bShape.centroid);
+      const result = satConvex(aWorld, bWorld);
+      if (!result.colliding) continue;
+      if (!bestResult || result.penetrationDepth < bestResult.penetrationDepth) bestResult = result;
+    }
+  }
+  return bestResult || NO_COLLISION;
+}
+function testFloorCollision(shape, posX, posY, rotationDeg, floorY) {
+  let maxPenetration = 0, contactX = 0;
+  for (const part of shape.convexParts) {
+    const world = transformVertices(part, posX, posY, rotationDeg, shape.centroid);
+    for (const v of world) {
+      const pen = v.y - floorY;
+      if (pen > maxPenetration) { maxPenetration = pen; contactX = v.x; }
+    }
+  }
+  if (maxPenetration > 0) return { colliding: true, penetrationDepth: maxPenetration, normal: { x: 0, y: -1 }, contactPoint: { x: contactX, y: floorY } };
+  return NO_COLLISION;
+}
+function testWallCollision(shape, posX, posY, rotationDeg, maxX) {
+  let leftPen = 0, rightPen = 0, leftContactY = 0, rightContactY = 0;
+  for (const part of shape.convexParts) {
+    const world = transformVertices(part, posX, posY, rotationDeg, shape.centroid);
+    for (const v of world) {
+      if (-v.x > leftPen) { leftPen = -v.x; leftContactY = v.y; }
+      if (v.x - maxX > rightPen) { rightPen = v.x - maxX; rightContactY = v.y; }
+    }
+  }
+  return {
+    left: leftPen > 0 ? { colliding: true, penetrationDepth: leftPen, normal: { x: 1, y: 0 }, contactPoint: { x: 0, y: leftContactY } } : NO_COLLISION,
+    right: rightPen > 0 ? { colliding: true, penetrationDepth: rightPen, normal: { x: -1, y: 0 }, contactPoint: { x: maxX, y: rightContactY } } : NO_COLLISION,
+  };
+}
+function satConvex(a, b) {
+  let minOverlap = Infinity, minAxis = { x: 0, y: 0 };
+  for (let pass = 0; pass < 2; pass++) {
+    const poly = pass === 0 ? a : b;
+    for (let i = 0; i < poly.length; i++) {
+      const j = (i + 1) % poly.length;
+      const edge = { x: poly[j].x - poly[i].x, y: poly[j].y - poly[i].y };
+      const axis = normalize({ x: -edge.y, y: edge.x });
+      if (!axis) continue;
+      const overlap = projectOverlap(a, b, axis);
+      if (overlap <= 0) return NO_COLLISION;
+      if (overlap < minOverlap) { minOverlap = overlap; minAxis = axis; }
+    }
+  }
+  const aCentroid = polygonCentroid(a), bCentroid = polygonCentroid(b);
+  const d = { x: aCentroid.x - bCentroid.x, y: aCentroid.y - bCentroid.y };
+  if (dot(d, minAxis) < 0) minAxis = { x: -minAxis.x, y: -minAxis.y };
+  let cx = 0, cy = 0, count = 0;
+  for (const v of a) if (pointInConvex(v, b)) { cx += v.x; cy += v.y; count++; }
+  for (const v of b) if (pointInConvex(v, a)) { cx += v.x; cy += v.y; count++; }
+  if (count === 0) { cx = (aCentroid.x + bCentroid.x) / 2; cy = (aCentroid.y + bCentroid.y) / 2; }
+  else { cx /= count; cy /= count; }
+  return { colliding: true, penetrationDepth: minOverlap, normal: minAxis, contactPoint: { x: cx, y: cy } };
+}
+function projectOverlap(a, b, axis) {
+  let aMin = Infinity, aMax = -Infinity;
+  for (const v of a) { const p = dot(v, axis); if (p < aMin) aMin = p; if (p > aMax) aMax = p; }
+  let bMin = Infinity, bMax = -Infinity;
+  for (const v of b) { const p = dot(v, axis); if (p < bMin) bMin = p; if (p > bMax) bMax = p; }
+  return Math.min(aMax - bMin, bMax - aMin);
+}
+function pointInConvex(p, poly) {
+  const n = poly.length; let sign = 0;
+  for (let i = 0; i < n; i++) {
+    const a = poly[i], b = poly[(i + 1) % n];
+    const c = (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x);
+    if (c !== 0) { const s = c > 0 ? 1 : -1; if (sign === 0) sign = s; else if (s !== sign) return false; }
+  }
+  return true;
+}
+function polygonCentroid(poly) {
+  let cx = 0, cy = 0;
+  for (const p of poly) { cx += p.x; cy += p.y; }
+  return { x: cx / poly.length, y: cy / poly.length };
+}
+function normalize(v) { const len = Math.sqrt(v.x * v.x + v.y * v.y); if (len < 1e-10) return null; return { x: v.x / len, y: v.y / len }; }
+function dot(a, b) { return a.x * b.x + a.y * b.y; }
+
+// ─── Simulation: init + step ────────────────────────────────────────
+function initLetters(cfg, rng) {
+  const { text, fontStack, fontWeight, fontSize, width, randomness, staggerDelay, spin } = cfg;
+  const chars = text.split('');
+  const uniqueChars = [...new Set(chars)];
+  const shapeMap = new Map();
+  uniqueChars.forEach(c => shapeMap.set(c, extractCharacterShape(c, fontStack, fontWeight, fontSize)));
+
+  const advances = chars.map(c => shapeMap.get(c).advance);
+  const totalWidth = advances.reduce((s, w) => s + w, 0);
+  const startX = (width - totalWidth) / 2;
+
+  let xOffset = 0;
+  return chars.map((char, i) => {
+    const shape = shapeMap.get(char);
+    const baseX = startX + xOffset;
+    xOffset += advances[i];
+    const randomOffsetX = (rng() - 0.5) * fontSize * randomness;
+    const randomDelayOffset = rng() * staggerDelay * randomness;
+    const maxRotVel = (spin / 180) * 8;
+    const rotVel = (rng() - 0.5) * maxRotVel * (0.5 + randomness * 0.5);
+    return {
+      char, x: baseX + randomOffsetX, y: -fontSize,
+      velocityY: 0, velocityX: 0, rotation: 0, rotationVelocity: rotVel,
+      settled: false, startDelay: i * staggerDelay + randomDelayOffset, started: false,
+      collisionShape: shape,
+    };
+  });
+}
+
+function stepSimulation(letters, cfg, elapsed) {
+  const { fontSize, width, height, dropSpeed, bounceHeight, letterPadding } = cfg;
+  const gravity = dropSpeed * 0.08;
+  const floorY = height - letterPadding;
+
+  const updated = letters.slice();
+  const indices = updated.map((_, i) => i);
+  indices.sort((a, b) => updated[b].y - updated[a].y);
+
+  for (const idx of indices) {
+    const l = updated[idx];
+    if (l.settled) continue;
+    if (!l.started) {
+      if (elapsed >= l.startDelay) updated[idx] = Object.assign({}, l, { started: true });
+      continue;
+    }
+
+    let newX = l.x, newY = l.y, newVelocityY = l.velocityY, newVelocityX = l.velocityX;
+    let newRotation = l.rotation, newRotationVelocity = l.rotationVelocity, newSettled = false;
+
+    newVelocityY += gravity;
+    newY += newVelocityY;
+    newX += newVelocityX;
+    newRotation += newRotationVelocity;
+    newRotationVelocity *= 0.98;
+    newVelocityX *= 0.98;
+
+    const floorResult = testFloorCollision(l.collisionShape, newX, newY, newRotation, floorY);
+    if (floorResult.colliding) {
+      newY -= floorResult.penetrationDepth;
+      newVelocityY = -Math.abs(newVelocityY) * bounceHeight;
+      newRotationVelocity *= 0.5;
+      if (Math.abs(newVelocityY) < 0.3) { newSettled = true; newVelocityY = 0; newVelocityX = 0; newRotationVelocity = 0; }
+    }
+
+    if (!newSettled) {
+      for (let j = 0; j < updated.length; j++) {
+        if (j === idx) continue;
+        const other = updated[j];
+        if (!other.started) continue;
+        if (!other.settled && other.y <= l.y) continue;
+        const result = testCollision(l.collisionShape, newX, newY, newRotation, other.collisionShape, other.x, other.y, other.rotation);
+        if (result.colliding) {
+          let nx = result.normal.x, ny = result.normal.y;
+          if (ny > 0.1) { ny = -ny; nx = -nx; }
+          newX += nx * result.penetrationDepth * 1.05;
+          newY += ny * result.penetrationDepth * 1.05;
+          newVelocityY = -Math.abs(newVelocityY) * bounceHeight;
+          newVelocityX *= 0.7;
+          const relX = (newX + l.collisionShape.centroid.x) - (other.x + other.collisionShape.centroid.x);
+          newVelocityX += Math.sign(relX) * 0.5;
+          newRotationVelocity *= 0.5;
+          if (Math.abs(newVelocityY) < 0.5 && Math.abs(newVelocityX) < 0.5) { newSettled = true; newVelocityY = 0; newVelocityX = 0; newRotationVelocity = 0; }
+          break;
+        }
+      }
+    }
+
+    const walls = testWallCollision(l.collisionShape, newX, newY, newRotation, width);
+    if (walls.left.colliding) { newX += walls.left.penetrationDepth; newVelocityX = Math.abs(newVelocityX) * 0.3; }
+    if (walls.right.colliding) { newX -= walls.right.penetrationDepth; newVelocityX = -Math.abs(newVelocityX) * 0.3; }
+
+    if (newSettled && newY < 0) { newSettled = false; newVelocityY = 0.5; }
+
+    if (isNaN(newX) || isNaN(newY) || isNaN(newVelocityX) || isNaN(newVelocityY)) {
+      newX = l.x; newY = floorY - l.collisionShape.height; newVelocityX = 0; newVelocityY = 0; newRotationVelocity = 0; newSettled = true;
+    }
+
+    const maxLeftX = -l.collisionShape.width * 0.5;
+    const maxRightX = width - l.collisionShape.width * 0.5;
+    if (newX < maxLeftX) { newX = maxLeftX; newVelocityX = 0; }
+    if (newX > maxRightX) { newX = maxRightX; newVelocityX = 0; }
+    if (newY < -fontSize * 2) { newY = -fontSize * 2; newVelocityY = Math.abs(newVelocityY) * 0.3; }
+
+    updated[idx] = Object.assign({}, l, {
+      x: newX, y: newY, velocityY: newVelocityY, velocityX: newVelocityX,
+      rotation: newRotation, rotationVelocity: newRotationVelocity, settled: newSettled,
+    });
+  }
+  return updated;
+}
+
+// ─── Trajectory cache (precompute once per state signature) ─────────
+let TRAJECTORY = { key: null, shapes: null, frames: null };
+
+// Simulate until every letter has settled, then hold the finished pile briefly.
+// The timeline length is therefore dynamic (it depends on the text, physics and
+// stagger) — the runtime reads it via tool.frameCount() below, so the animation
+// always runs exactly as long as the fall takes, never cutting off early.
+const FPS = 30;
+const MAX_FRAMES = 40 * FPS;                 // safety cap (40s) if something never settles
+const HOLD_FRAMES = Math.round(0.6 * FPS);   // show the completed poster before it loops
+
+function buildTrajectory(cfg, seed) {
+  const rng = mulberry32(seed >>> 0);
+  let letters = initLetters(cfg, rng);
+  const shapes = letters.map(l => ({ char: l.char, shape: l.collisionShape }));
+
+  const frames = [];
+  const dtMs = 1000 / 60;     // physics tuned for 60 Hz ticks
+  const subSteps = 2;          // 2 ticks per 30 fps output frame
+  let elapsed = 0;
+  for (let f = 0; f < MAX_FRAMES; f++) {
+    for (let k = 0; k < subSteps; k++) { letters = stepSimulation(letters, cfg, elapsed); elapsed += dtMs; }
+    frames.push(letters.map(l => ({ x: l.x, y: l.y, rotation: l.rotation, started: l.started, settled: l.settled })));
+    if (letters.every(l => l.settled)) break;   // all letters have come to rest
+  }
+  const last = frames[frames.length - 1];
+  for (let h = 0; h < HOLD_FRAMES; h++) frames.push(last);
+  return { shapes, frames };
+}
+
+// The seed the runtime will use (mirrors makeCtx: state.seed, else default 1).
+const seedOf = (state) => (state.seed != null ? state.seed : 1) >>> 0;
+
+// Translate a tool state into the physics config (shared by frameCount + frame).
+function configFromState(state) {
+  return {
+    text: state.text || ' ',
+    fontStack: getFontStack(state.fontFamily), fontWeight: state.fontWeight, fontSize: state.fontSize,
+    width: state.width, height: state.height,
+    dropSpeed: state.dropSpeed, bounceHeight: state.bounceHeight, letterPadding: state.letterPadding,
+    spin: state.spin, randomness: state.randomness, staggerDelay: state.staggerDelay,
+  };
+}
+
+// Build (or reuse) the trajectory for a state; keyed on every physics input.
+function ensureTrajectory(state, seed) {
+  const cfg = configFromState(state);
+  const key = JSON.stringify([
+    cfg.text, cfg.fontStack, cfg.fontWeight, cfg.fontSize, cfg.width, cfg.height,
+    cfg.dropSpeed, cfg.bounceHeight, cfg.letterPadding, cfg.spin, cfg.randomness, cfg.staggerDelay, seed,
+  ]);
+  if (TRAJECTORY.key !== key) TRAJECTORY = Object.assign({ key }, buildTrajectory(cfg, seed));
+  return TRAJECTORY;
+}
+
+Kazam.defineTool({
+  id: 'letterfall',
+  name: 'Letterfall',
+  version: 1,
+  render: 'canvas',
+  tagline: 'Type a word, drop it, watch it pile up. Physics-driven poster generator.',
+  duration: 5,          // fallback hint; the real length comes from frameCount()
+  fps: 30,
+  groups: ['Frame', 'Colour', 'Text', 'Animation', 'Debug'],
+  preview: { background: '#141414' },
+  exportFormats: ['png', 'gif', 'webm'],
+
+  // Dynamic timeline: run until every letter has settled (+ a short hold). The
+  // runtime sizes the transport and export loop to this instead of duration×fps.
+  frameCount(state) { return ensureTrajectory(state, seedOf(state)).frames.length; },
+
+  settings: {
+    width:  { type: 'number', label: 'Width',  group: 'Frame', col: 'half', default: 640, min: 200, max: 2000, step: 10, unit: 'px' },
+    height: { type: 'number', label: 'Height', group: 'Frame', col: 'half', default: 800, min: 200, max: 2000, step: 10, unit: 'px' },
+
+    bgColor:   { type: 'color', label: 'Background', group: 'Colour', default: { hex: '#141414', opacity: 1 } },
+    textColor: { type: 'color', label: 'Letters',    group: 'Colour', default: { hex: '#f4f4f4', opacity: 1 } },
+
+    text:       { type: 'text',   label: 'Content', group: 'Text', default: 'FALL' },
+    fontFamily: { type: 'select', label: 'Font', group: 'Text', col: 'half', default: 'sans',
+                  options: [{ value: 'sans', label: 'Sans' }, { value: 'serif', label: 'Serif' }, { value: 'mono', label: 'Mono' }] },
+    fontWeight: { type: 'select', label: 'Weight', group: 'Text', col: 'half', default: '800',
+                  options: [{ value: '400', label: 'Light' }, { value: '700', label: 'Bold' }, { value: '800', label: 'Black' }] },
+    fontSize:   { type: 'slider', label: 'Size', group: 'Text', default: 180, min: 40, max: 400, step: 5, unit: 'px' },
+
+    dropSpeed:    { type: 'slider', label: 'Drop speed',    group: 'Animation', col: 'half', default: 1.5, min: 0.5, max: 8, step: 0.25 },
+    bounceHeight: { type: 'slider', label: 'Bounce',        group: 'Animation', col: 'half', default: 0.45, min: 0, max: 1, step: 0.05, format: 'percent' },
+    spin:         { type: 'slider', label: 'Spin',          group: 'Animation', col: 'half', default: 60, min: 0, max: 180, step: 5 },
+    letterPadding:{ type: 'slider', label: 'Floor padding', group: 'Animation', col: 'half', default: 4, min: 0, max: 40, step: 1, unit: 'px' },
+    randomness:   { type: 'slider', label: 'Randomness',    group: 'Animation', default: 0.65, min: 0, max: 1, step: 0.05, format: 'percent' },
+    staggerDelay: { type: 'slider', label: 'Stagger',       group: 'Animation', default: 260, min: 0, max: 500, step: 10, unit: 'ms' },
+
+    showCollisionShapes: { type: 'toggle', label: 'Show collision shapes', group: 'Debug', default: false },
+  },
+
+  size: (s) => ({ width: s.width, height: s.height }),
+
+  frame(state, t, ctx) {
+    const c = ctx.ctx2d, W = ctx.width, H = ctx.height;
+    const fontStack = getFontStack(state.fontFamily);
+
+    // Trajectory is precomputed once per state (cached); index into it by time.
+    const traj = ensureTrajectory(state, ctx.seed);
+    const total = traj.frames.length;
+    const idx = Math.min(total - 1, Math.max(0, Math.round(t * (ctx.fps || 30))));
+    const snap = traj.frames[idx];
+    const shapes = traj.shapes;
+
+    // Background
+    c.fillStyle = ctx.colorToCss(state.bgColor) || '#000';
+    c.fillRect(0, 0, W, H);
+
+    const textCss = ctx.colorToCss(state.textColor) || '#fff';
+    c.font = `${state.fontWeight} ${state.fontSize}px ${fontStack}`;
+    c.textBaseline = 'alphabetic';
+
+    for (let i = 0; i < snap.length; i++) {
+      const l = snap[i];
+      if (!l.started && !l.settled) continue;
+      const shape = shapes[i].shape;
+      const cx = shape.centroid.x, cy = shape.centroid.y;
+
+      c.save();
+      c.translate(l.x + cx, l.y + cy);
+      c.rotate((l.rotation * Math.PI) / 180);
+      c.translate(-cx, -cy);
+
+      c.fillStyle = textCss;
+      c.fillText(shapes[i].char, -shape.leftBearing, shape.ascent);
+
+      if (state.showCollisionShapes) {
+        for (const part of shape.convexParts) {
+          c.beginPath();
+          part.forEach((p, k) => { if (k === 0) c.moveTo(p.x, p.y); else c.lineTo(p.x, p.y); });
+          c.closePath();
+          c.fillStyle = 'rgba(0, 255, 100, 0.15)';
+          c.fill();
+          c.strokeStyle = 'rgba(0, 255, 100, 0.6)';
+          c.lineWidth = 1;
+          c.stroke();
+        }
+      }
+      c.restore();
+    }
+  },
+});
+</script>
+</body>
+</html>
