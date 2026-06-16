@@ -16,6 +16,8 @@
 
   const SVG_NS = "http://www.w3.org/2000/svg";
   const PROTOCOL = 1;
+  // URL of this script — used to locate sibling assets like tokens.json.
+  const SELF_SRC = (document.currentScript && document.currentScript.src) || "";
 
   // ----------------------------------------------------------------- tokens
   // shadcn/ui default (neutral) palette. :root = light, .dark = dark overrides.
@@ -250,6 +252,74 @@
     };
   }
 
+  // ------------------------------------------------------------- design system
+  // The design system describes TOOL OUTPUT (not the frame chrome): a colour
+  // palette, font choices, an accent and a corner radius. It feeds two things —
+  // a tool's build() output (via ctx.design) and the control affordances (colour
+  // swatches, font lists). It is kept separate from the shadcn chrome tokens
+  // above, which only style the frame itself.
+  //
+  // Resolution order (later overrides earlier): baked defaults → tokens.json
+  // (sibling of this script; the committable source of truth) → localStorage
+  // (live edits from the design-system editor). tokens.json is fetched async and
+  // is optional, so everything still works on file:// from the baked defaults.
+  const DEFAULT_DESIGN = {
+    version: 1,
+    palette: ["#141414", "#f4f4f4", "#6b7280", "#e5e7eb", "#ef4444", "#f59e0b", "#10b981", "#3b82f6"],
+    fonts: [
+      { id: "sans",  label: "Sans",  stack: "system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" },
+      { id: "serif", label: "Serif", stack: "Georgia, 'Times New Roman', serif" },
+      { id: "mono",  label: "Mono",  stack: "ui-monospace, 'SF Mono', Menlo, monospace" },
+    ],
+    accent: "#3b82f6",
+    radius: 8,
+  };
+  const DESIGN_LS_KEY = "kazam.design";
+  let designSystem = mergeDesign(DEFAULT_DESIGN, readDesignLS());
+  const designListeners = new Set();   // called after the design system changes
+
+  function mergeDesign(base, override) {
+    if (!override || typeof override !== "object") return Object.assign({}, base);
+    const out = Object.assign({}, base, override);
+    // arrays/objects replace wholesale when present (so an editor can shrink them)
+    if (override.palette) out.palette = override.palette.slice();
+    if (override.fonts) out.fonts = override.fonts.map(f => Object.assign({}, f));
+    return out;
+  }
+  function readDesignLS() {
+    try { const v = localStorage.getItem(DESIGN_LS_KEY); return v ? JSON.parse(v) : null; }
+    catch (e) { return null; }
+  }
+  function getDesign() { return designSystem; }
+  function fontStackById(id) {
+    const f = (designSystem.fonts || []).find(f => f.id === id);
+    return f ? f.stack : (designSystem.fonts && designSystem.fonts[0] ? designSystem.fonts[0].stack : "sans-serif");
+  }
+  // Apply a new design system. `persist` writes the localStorage override (used by
+  // the editor); tokens.json load passes persist:false so it doesn't shadow the file.
+  function setDesign(next, opts) {
+    opts = opts || {};
+    designSystem = mergeDesign(DEFAULT_DESIGN, next);
+    if (opts.persist) { try { localStorage.setItem(DESIGN_LS_KEY, JSON.stringify(designSystem)); } catch (e) {} }
+    designListeners.forEach(fn => { try { fn(designSystem); } catch (e) {} });
+  }
+  function onDesignChange(fn) { designListeners.add(fn); return () => designListeners.delete(fn); }
+
+  // Async-load the committable tokens.json sitting next to this script. localStorage
+  // (if present) still wins, since it carries the user's live edits. `designReady`
+  // resolves once this settles, so boot can wait and resolve defaults against the
+  // final design (tokens.json fails fast / is skipped on file://, so this is cheap).
+  const designReady = (function loadTokensJson() {
+    if (!SELF_SRC) return Promise.resolve();
+    let url; try { url = new URL("tokens.json", SELF_SRC).href; } catch (e) { return Promise.resolve(); }
+    return fetch(url).then(r => (r.ok ? r.json() : null)).then(json => {
+      if (!json) return;
+      const ls = readDesignLS();
+      designSystem = mergeDesign(mergeDesign(DEFAULT_DESIGN, json), ls);
+      designListeners.forEach(fn => { try { fn(designSystem); } catch (e) {} });
+    }).catch(() => {});
+  })();
+
   // ------------------------------------------------------------- seeded RNG
   function mulberry32(a) {
     return function () {
@@ -312,11 +382,15 @@
   const fieldUnit = field => field.unit || (field.format === "percent" ? "%" : "");
 
   // ------------------------------------------------------------- state store
-  function resolveDefaults(settings) {
+  // A field's `default` may be a literal, or a function (design) => value so a tool
+  // can default its output to the current design system (e.g. palette[0]).
+  function resolveDefaults(settings, design) {
+    design = design || designSystem;
     const state = {};
     for (const key in settings) {
       const f = settings[key];
-      state[key] = f.default !== undefined ? clone(f.default) : null;
+      const d = typeof f.default === "function" ? f.default(design) : f.default;
+      state[key] = d !== undefined ? clone(d) : null;
     }
     return state;
   }
@@ -716,6 +790,7 @@
     let uid = 0;
     return {
       tokens: resolveTokens(),
+      design: designSystem,
       random: makeRandom(streamSeed, baseSeed),
       seed: baseSeed, mode,
       t: opts.t || 0, frame: opts.frameIndex || 0, duration: opts.duration != null ? opts.duration : (tool.duration || 0), fps: tool.fps || 30,
@@ -791,6 +866,9 @@
       return current;
     }
     function render() { totalFrames = computeFrames(); return renderAt(animated ? Math.floor(pos) % totalFrames : 0); }
+    // Re-render when the design system changes (e.g. tokens.json loads, or the
+    // editor pushes an update) so palette/font-derived output stays current.
+    onDesignChange(() => render());
     function tick(ts) {
       if (!playing) return;
       if (!lastTs) lastTs = ts;
@@ -1154,8 +1232,11 @@
     }
     const framed = window.self !== window.top;
     const boot = () => (framed ? bootFramed(tool) : bootStandalone(tool));
-    if (document.body) boot();
-    else window.addEventListener("DOMContentLoaded", boot);
+    // Wait for the design system (tokens.json) to settle so defaults resolve
+    // against the final palette/fonts, then boot once the DOM is ready.
+    const ready = () => designReady.then(boot);
+    if (document.body) ready();
+    else window.addEventListener("DOMContentLoaded", ready);
     return tool;
   }
 
@@ -1167,6 +1248,10 @@
   // and uses these to build the controls panel + state store around tool iframes.
   window.Kazam = {
     defineTool, version: PROTOCOL,
-    host: { createStore, resolveDefaults, buildPanel, resolveTokens, download, flashCopied, renderExportToggles, neutralBg },
+    // Design system (tool-output palette/fonts/accent/radius). getDesign reads the
+    // resolved set; setDesign applies+persists an edit; onDesignChange subscribes;
+    // fontStackById resolves a font id to its CSS stack.
+    getDesign, setDesign, onDesignChange, fontStackById, DEFAULT_DESIGN,
+    host: { createStore, resolveDefaults, buildPanel, resolveTokens, download, flashCopied, renderExportToggles, neutralBg, getDesign, setDesign, onDesignChange, fontStackById },
   };
 })();

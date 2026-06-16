@@ -516,8 +516,10 @@ Kazam.defineTool({
     width:  { type: 'number', label: 'Width',  group: 'Frame', col: 'half', default: 640, min: 200, max: 2000, step: 10, unit: 'px' },
     height: { type: 'number', label: 'Height', group: 'Frame', col: 'half', default: 800, min: 200, max: 2000, step: 10, unit: 'px' },
 
-    bgColor:   { type: 'color', label: 'Background', group: 'Colour', default: { hex: '#141414', opacity: 1 } },
-    textColor: { type: 'color', label: 'Letters',    group: 'Colour', default: { hex: '#f4f4f4', opacity: 1 } },
+    // Defaults pull from the design system (frame/tokens.json) so output colours
+    // come from the configured palette, not hardcoded brand values.
+    bgColor:   { type: 'color', label: 'Background', group: 'Colour', default: (d) => ({ hex: d.palette[0], opacity: 1 }) },
+    textColor: { type: 'color', label: 'Letters',    group: 'Colour', default: (d) => ({ hex: d.palette[1], opacity: 1 }) },
 
     text:       { type: 'text',   label: 'Content', group: 'Text', default: 'FALL' },
     fontFamily: { type: 'select', label: 'Font', group: 'Text', col: 'half', default: 'sans',
