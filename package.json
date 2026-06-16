@@ -1,0 +1,13 @@
+{
+  "name": "kazam",
+  "version": "0.0.1",
+  "private": true,
+  "description": "A frame for small, self-contained design tools. Tools ship as plain double-clickable HTML; this package holds dev-only tooling (type-checking + tests) that never ships.",
+  "scripts": {
+    "test": "node --test",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0"
+  }
+}

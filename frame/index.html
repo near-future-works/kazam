@@ -182,15 +182,14 @@ function onExportResult(d) {
 
 // ---- tool file: copy / download / import ----
 // Inline the host's kazam.js into a tool's source so it becomes a single
-// self-contained file (and so blob-URL imports resolve their runtime).
-async function inlineRuntime(raw) {
-  if (!/src=["'][^"']*kazam\.js["']/i.test(raw)) return raw; // already self-contained
-  const rt = await fetch("kazam.js").then(r => r.text());
-  return raw.replace(/<script\b[^>]*\bsrc=["'][^"']*kazam\.js["'][^>]*>\s*<\/script>/i, "<script>\n" + rt + "\n<\/script>");
-}
+// self-contained file (and so blob-URL imports resolve their runtime). The
+// string substitution is the shared, tested Kazam.host.inlineRuntime; the host
+// just supplies the fetched runtime text.
 async function selfContainedSource() {
   const raw = await fetch(currentPath).then(r => r.text());
-  return inlineRuntime(raw);
+  if (!/src=["'][^"']*kazam\.js["']/i.test(raw)) return raw; // already self-contained
+  const rt = await fetch("kazam.js").then(r => r.text());
+  return Kazam.host.inlineRuntime(raw, rt);
 }
 document.getElementById("copyHtml").addEventListener("click", async (e) => {
   if (!current) return;
