@@ -201,8 +201,9 @@ async function selfContainedSource() {
 }
 document.getElementById("copyHtml").addEventListener("click", async (e) => {
   if (!current) return;
+  const btn = e.currentTarget;   // capture before await (currentTarget is null after it)
   navigator.clipboard.writeText(await selfContainedSource());
-  Kazam.host.flashCopied(e.currentTarget, "Copied!");
+  Kazam.host.flashCopied(btn, "Copied!");
 });
 
 // ---- disclosure (Tool settings) ----
