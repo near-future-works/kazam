@@ -63,11 +63,19 @@
   .kz-head { padding: 14px 16px 12px; }
   .kz-head h1 { font-size: 13px; font-weight: 600; margin: 0; }
   .kz-head .kz-sub { color: hsl(var(--muted-foreground)); font-size: 11px; line-height: 1.4; margin-top: 4px; }
+  .kz-head .kz-titlerow { display: flex; align-items: center; gap: 8px; }
+  .kz-badge { font-size: 10px; line-height: 1; letter-spacing: .3px; color: hsl(var(--muted-foreground) / .8);
+    border: 1px solid hsl(var(--border)); border-radius: 999px; padding: 3px 7px; }
   .kz-section { padding: 14px 16px; border-top: 1px solid hsl(var(--border)); }
   .kz-section > * { margin: 0 0 12px; }
   .kz-section > *:last-child { margin-bottom: 0; }
   .kz-sechead { display: flex; align-items: center; justify-content: space-between; min-height: 22px; }
   .kz-sechead h2 { font-size: 13px; font-weight: 600; margin: 0; }
+  .kz-vis { width: 24px; height: 24px; padding: 0; border: none; background: none; border-radius: 5px;
+    display: inline-flex; align-items: center; justify-content: center; color: hsl(var(--muted-foreground)); cursor: pointer; }
+  .kz-vis:hover { background: hsl(var(--secondary)); color: hsl(var(--foreground)); }
+  .kz-vis svg { width: 15px; height: 15px; }
+  .kz-vis[aria-pressed="false"] svg { opacity: .35; }
   .kz-flabel { display: block; font-size: 11px; color: hsl(var(--muted-foreground)); margin: 0 0 6px; }
 
   .kz-field {
@@ -391,6 +399,17 @@
     return { node: wrap, refresh };
   }
 
+  const EYE_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg>';
+  // a toggle mounted in the section header (e.g. an eye to enable/disable a section)
+  function renderHeaderToggle(key, field, store) {
+    const btn = document.createElement("button"); btn.type = "button"; btn.className = "kz-vis"; btn.title = field.label || key;
+    btn.innerHTML = EYE_SVG;
+    btn.addEventListener("click", () => store.set(key, !store.get()[key]));
+    const refresh = () => btn.setAttribute("aria-pressed", String(!!store.get()[key]));
+    refresh();
+    return { node: btn, refresh };
+  }
+
   function renderText(key, field, store) {
     const wrap = document.createElement("div");
     const label = document.createElement("label"); label.className = "kz-flabel"; label.textContent = field.label || key;
@@ -418,10 +437,10 @@
     opwrap.appendChild(opac); opwrap.appendChild(opsfx);
     cfield.append(swatch, hex, divline, opwrap, picker);
 
-    // optional colour: add / remove affordance
+    // optional colour: "Add …" affordance. Removal is non-destructive — clearing the
+    // hex field sets it to None, which collapses the row back to the add button.
     const addBtn = document.createElement("button"); addBtn.type = "button"; addBtn.className = "kz-add";
     addBtn.innerHTML = `<span class="kz-plus">+</span>${field.addLabel || ("Add " + (field.label || key).toLowerCase())}`;
-    const rm = document.createElement("button"); rm.type = "button"; rm.className = "kz-rm"; rm.textContent = "−"; rm.title = "Remove";
 
     const get = () => store.get()[key];
     const present = () => { const c = get(); return c && !isTransparent(c.hex); };
@@ -440,10 +459,8 @@
       (startV, dx) => { let v = Math.max(0, Math.min(1, startV + dx / 260)); v = Math.round(v * 100) / 100; setColor({ opacity: v }); opac.value = Math.round(v * 100); },
       () => (get() ? (get().opacity ?? 1) : 1));
     addBtn.addEventListener("click", () => store.set(key, { hex: picker.value || "#ffffff", opacity: 1 }));
-    rm.addEventListener("click", () => store.set(key, null));
 
-    if (field.optional) { row.append(clabel, cfield, rm); }
-    else { row.append(clabel, cfield); }
+    row.append(clabel, cfield);
 
     const container = document.createElement("div");
     container.append(row);
@@ -497,15 +514,20 @@
       const section = document.createElement("div"); section.className = "kz-section";
       const head = document.createElement("div"); head.className = "kz-sechead";
       const h2 = document.createElement("h2"); h2.textContent = group; head.appendChild(h2);
+      // header-mounted toggles (e.g. an eye that enables/disables the section)
+      keys.filter(k => settings[k].header).forEach(k => {
+        const r = renderHeaderToggle(k, settings[k], store); byKey[k] = r.refresh; head.appendChild(r.node);
+      });
       section.appendChild(head);
 
-      // Optionally pack consecutive 'half' fields into two-up rows.
+      // Pack consecutive 'half' body fields into two-up rows.
+      const bodyKeys = keys.filter(k => !settings[k].header);
       let i = 0;
-      while (i < keys.length) {
-        const key = keys[i], field = settings[key];
+      while (i < bodyKeys.length) {
+        const key = bodyKeys[i], field = settings[key];
         const r = renderField(key, field, store); byKey[key] = r.refresh;
-        if (pair && field.col === "half" && i + 1 < keys.length && settings[keys[i + 1]].col === "half") {
-          const k2 = keys[i + 1];
+        if (pair && field.col === "half" && i + 1 < bodyKeys.length && settings[bodyKeys[i + 1]].col === "half") {
+          const k2 = bodyKeys[i + 1];
           const r2 = renderField(k2, settings[k2], store); byKey[k2] = r2.refresh;
           const pairEl = document.createElement("div"); pairEl.className = "kz-pair";
           pairEl.append(r.node, r2.node); section.appendChild(pairEl); i += 2;
@@ -627,7 +649,9 @@
     const app = document.createElement("div"); app.className = "kz-app";
     const panel = document.createElement("aside"); panel.className = "kz-panel";
     const head = document.createElement("div"); head.className = "kz-head";
-    head.innerHTML = `<h1>${tool.name || tool.id}</h1>` + (tool.tagline ? `<div class="kz-sub">${tool.tagline}</div>` : "");
+    head.innerHTML =
+      `<div class="kz-titlerow"><h1>${tool.name || tool.id}</h1><span class="kz-badge">Standalone</span></div>` +
+      (tool.tagline ? `<div class="kz-sub">${tool.tagline}</div>` : "");
     panel.appendChild(head);
 
     buildPanel(panel, tool, store, /* pair */ true); // same two-up pairing as the frame

@@ -103,12 +103,12 @@ Kazam.defineTool({
                  { value: 'edges', label: 'Edges (radial)' }, { value: 'center', label: 'Center (radial)' },
                ] },
     fadeAmt: { type: 'slider', label: 'Amount', group: 'Dither', col: 'half', default: 1, min: 0, max: 1, step: 0.01, format: 'percent' },
-    fadeCurve:{ type: 'slider', label: 'Curve', group: 'Dither', col: 'half', default: 6, min: 0.2, max: 6, step: 0.1, unit: '×' },
+    fadeCurve:{ type: 'slider', label: 'Curve', group: 'Dither', col: 'half', default: 6, min: 0.2, max: 6, step: 0.1 },
 
     fg:      { type: 'color', label: 'Foreground', group: 'Colour', default: { hex: '#1f2e1c', opacity: 1 } },
     bg:      { type: 'color', label: 'Background', group: 'Colour', optional: true, default: null },
 
-    strokeOn:    { type: 'toggle', label: 'Stroke', group: 'Stroke', default: true },
+    strokeOn:    { type: 'toggle', label: 'Stroke', group: 'Stroke', header: true, default: true },
     strokeAlign: { type: 'select', label: 'Align', group: 'Stroke', col: 'half', default: 'outside',
                    options: [{ value: 'center', label: 'Center' }, { value: 'inside', label: 'Inside' }, { value: 'outside', label: 'Outside' }] },
     strokeWidth: { type: 'number', label: 'Width', group: 'Stroke', col: 'half', default: 2, min: 0, max: 40, step: 0.5, unit: 'px' },
