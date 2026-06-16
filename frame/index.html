@@ -29,8 +29,10 @@
   .host-disc-toggle .chev { color: hsl(var(--muted-foreground)); transition: transform .15s; }
   .host-disc-toggle[aria-expanded="true"] .chev { transform: rotate(180deg); }
   .host-disc-body { padding: 0 16px 14px; }
-  .host-disc-group + .host-disc-group { margin-top: 12px; }
-  .host-disc-group .lbl { font-size: 11px; color: hsl(var(--muted-foreground)); margin-bottom: 6px; }
+  .host-action + .host-action { margin-top: 14px; }
+  .host-action .kz-btn { width: 100%; }
+  .host-action-desc { font-size: 11px; color: hsl(var(--muted-foreground)); margin-top: 5px; line-height: 1.4; }
+  .host-disc-secondary { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 14px; }
   .host-stage { position: relative; overflow: hidden; }
   .host-frame { width: 100%; height: 100%; border: 0; display: block; }
   .host-bar { position: absolute; top: 10px; right: 10px; z-index: 2; display: flex; align-items: center; gap: 6px;
@@ -54,24 +56,22 @@
       </div>
       <div class="host-disc">
         <button class="host-disc-toggle" id="discToggle" aria-expanded="false" aria-controls="discBody">
-          <span>Tool &amp; presets</span>
+          <span>Tool settings</span>
           <svg class="chev" viewBox="0 0 12 12" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4.5 6 7.5 9 4.5"/></svg>
         </button>
         <div class="host-disc-body" id="discBody" hidden>
-          <div class="host-disc-group">
-            <div class="lbl">Tool</div>
-            <div class="kz-btnrow">
-              <button class="kz-btn" id="copyTool">Copy</button>
-              <button class="kz-btn" id="downloadTool">Download</button>
-              <button class="kz-btn" id="importTool">Import</button>
-            </div>
+          <div class="host-action">
+            <button class="kz-btn" id="copySettings">Copy current settings</button>
+            <div class="host-action-desc">Paste into Claude to set these as the tool’s default.</div>
           </div>
-          <div class="host-disc-group">
-            <div class="lbl">Preset</div>
-            <div class="kz-btnrow">
-              <button class="kz-btn" id="copyPreset">Copy</button>
-              <button class="kz-btn" id="loadPreset">Load</button>
-            </div>
+          <div class="host-action">
+            <button class="kz-btn" id="copyHtml">Copy tool as HTML</button>
+            <div class="host-action-desc">Send it to a teammate to drop into their own Kazam.</div>
+          </div>
+          <div class="host-disc-secondary">
+            <button class="kz-mini" id="importTool">Import a tool…</button>
+            <button class="kz-mini" id="loadPreset">Load settings…</button>
+            <button class="kz-mini" id="downloadTool">Download .html</button>
           </div>
           <input type="file" id="importInput" accept=".html,text/html" style="display:none">
         </div>
@@ -182,7 +182,7 @@ async function selfContainedSource() {
   const raw = await fetch(currentPath).then(r => r.text());
   return inlineRuntime(raw);
 }
-document.getElementById("copyTool").addEventListener("click", async () => {
+document.getElementById("copyHtml").addEventListener("click", async () => {
   if (current) navigator.clipboard.writeText(await selfContainedSource());
 });
 document.getElementById("downloadTool").addEventListener("click", async () => {
@@ -210,11 +210,14 @@ discToggle.addEventListener("click", () => {
   discBody.hidden = open;
 });
 
-// ---- presets: one Copy (Markdown w/ an embedded JSON block); Load reads Markdown or JSON ----
-document.getElementById("copyPreset").addEventListener("click", () => {
+// ---- "Copy current settings": a Claude-ready instruction with an embedded JSON block ----
+document.getElementById("copySettings").addEventListener("click", () => {
   if (!current) return;
-  const md = `# ${current.tool.name} preset\n\n\`\`\`json\n${current.store.serialise()}\n\`\`\`\n`;
-  navigator.clipboard.writeText(md);
+  const txt =
+    `Set these as the default values for the "${current.tool.name}" Kazam tool — ` +
+    `update each field's \`default\` in the settings schema to match:\n\n` +
+    "```json\n" + current.store.serialise() + "\n```\n";
+  navigator.clipboard.writeText(txt);
 });
 document.getElementById("loadPreset").addEventListener("click", () => {
   if (!current) return;
