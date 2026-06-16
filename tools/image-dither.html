@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Image Dither</title>
+<script src="../frame/kazam.js"></script>
+</head>
+<body>
+<script>
+// Demonstrates the `image` asset field. The runtime decodes the uploaded
+// image to an ImageBitmap; build() receives it as state.image.bitmap.
+
+Kazam.defineTool({
+  id: 'image-dither',
+  name: 'Image Dither',
+  version: 1,
+  render: 'canvas',
+  tagline: 'Upload an image and render it as a monochrome Floyd–Steinberg dither.',
+  groups: ['Image', 'Dither', 'Colour'],
+  preview: { background: '#ebf1e5' },
+  exportFormats: ['png'],
+
+  settings: {
+    image:    { type: 'image',  label: 'Source image', group: 'Image' },
+    width:    { type: 'number', label: 'Width', group: 'Image', default: 700, min: 100, max: 2000, step: 10, unit: 'px' },
+
+    pixel:    { type: 'slider', label: 'Pixel size', group: 'Dither', col: 'half', default: 4, min: 1, max: 24, step: 1, unit: 'px' },
+    contrast: { type: 'slider', label: 'Contrast', group: 'Dither', col: 'half', default: 1, min: 0.2, max: 3, step: 0.05 },
+    brightness:{ type: 'slider', label: 'Brightness', group: 'Dither', default: 0, min: -0.5, max: 0.5, step: 0.01 },
+
+    ink:      { type: 'color',  label: 'Ink', group: 'Colour', default: { hex: '#1f2e1c', opacity: 1 } },
+    paper:    { type: 'color',  label: 'Paper', group: 'Colour', default: { hex: '#ebf1e5', opacity: 1 } },
+  },
+
+  size: (s) => {
+    const ar = (s.image && s.image.height) ? s.image.height / s.image.width : 0.66;
+    return { width: s.width, height: Math.max(1, Math.round(s.width * ar)) };
+  },
+
+  build(s, ctx) {
+    const c = ctx.ctx2d, W = ctx.width, H = ctx.height;
+    c.fillStyle = (s.paper && s.paper.hex) || '#fff';
+    c.fillRect(0, 0, W, H);
+
+    if (!s.image || !s.image.bitmap) {
+      c.fillStyle = (s.ink && s.ink.hex) || '#000';
+      c.globalAlpha = 0.35; c.textAlign = 'center'; c.textBaseline = 'middle';
+      c.font = '16px -apple-system, system-ui, sans-serif';
+      c.fillText('Upload an image to dither', W / 2, H / 2);
+      c.globalAlpha = 1;
+      return;
+    }
+
+    // downsample the image to the dither grid
+    const px = Math.max(1, s.pixel);
+    const cols = Math.max(1, Math.ceil(W / px)), rows = Math.max(1, Math.ceil(H / px));
+    const off = document.createElement('canvas'); off.width = cols; off.height = rows;
+    const octx = off.getContext('2d');
+    octx.drawImage(s.image.bitmap, 0, 0, cols, rows);
+    const data = octx.getImageData(0, 0, cols, rows).data;
+
+    // luminance → brightness/contrast → Floyd–Steinberg (1 = paper, 0 = ink)
+    const buf = new Float32Array(cols * rows);
+    for (let i = 0; i < cols * rows; i++) {
+      const o = i * 4;
+      let l = (0.299 * data[o] + 0.587 * data[o + 1] + 0.114 * data[o + 2]) / 255;
+      l = (l - 0.5) * s.contrast + 0.5 + s.brightness;
+      buf[i] = Math.min(1, Math.max(0, l));
+    }
+
+    c.fillStyle = (s.ink && s.ink.hex) || '#000';
+    for (let y = 0; y < rows; y++) {
+      for (let x = 0; x < cols; x++) {
+        const i = y * cols + x, v = buf[i], nw = v < 0.5 ? 0 : 1, err = v - nw;
+        if (nw === 0) c.fillRect(x * px, y * px, px, px);
+        if (x + 1 < cols) buf[i + 1] += err * 7 / 16;
+        if (y + 1 < rows) {
+          if (x > 0) buf[i + cols - 1] += err * 3 / 16;
+          buf[i + cols] += err * 5 / 16;
+          if (x + 1 < cols) buf[i + cols + 1] += err * 1 / 16;
+        }
+      }
+    }
+  },
+});
+</script>
+</body>
+</html>

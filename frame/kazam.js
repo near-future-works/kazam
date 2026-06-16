@@ -158,6 +158,13 @@
     background: none; border: none; border-radius: 4px; color: hsl(var(--muted-foreground)); font-size: 16px; cursor: pointer; }
   .kz-rm:hover { background: hsl(var(--secondary)); color: hsl(var(--foreground)); }
 
+  /* image field */
+  .kz-imgfield { display: flex; align-items: center; gap: 10px; }
+  .kz-imgthumb { width: 44px; height: 44px; flex: none; object-fit: cover; border: 1px solid hsl(var(--input));
+    border-radius: calc(var(--radius) - 2px); background: hsl(var(--secondary)); }
+  .kz-imgmeta { font-size: 11px; color: hsl(var(--muted-foreground)); margin-bottom: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .kz-imgbtns { display: flex; gap: 12px; }
+
   .kz-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 
   .kz-btnrow { display: flex; gap: 8px; align-items: center; }
@@ -497,6 +504,43 @@
     return { node: container, refresh };
   }
 
+  // Image asset field. Stores a JSON-serialisable { src(dataURL), width, height, name }
+  // in state (so presets carry it inline); the runtime decodes it to an ImageBitmap
+  // for build() — see resolveState in createPreview.
+  function renderImage(key, field, store) {
+    const container = document.createElement("div");
+    const label = document.createElement("label"); label.className = "kz-flabel"; label.textContent = field.label || key;
+    const input = document.createElement("input"); input.type = "file"; input.accept = "image/*"; input.style.display = "none";
+    const addBtn = document.createElement("button"); addBtn.type = "button"; addBtn.className = "kz-add";
+    addBtn.innerHTML = `<span class="kz-plus">+</span>${field.addLabel || "Upload image"}`;
+    const row = document.createElement("div"); row.className = "kz-imgfield";
+    const thumb = document.createElement("img"); thumb.className = "kz-imgthumb";
+    const meta = document.createElement("div"); meta.className = "kz-imgmeta";
+    const replace = document.createElement("button"); replace.type = "button"; replace.className = "kz-mini"; replace.textContent = "Replace";
+    const remove = document.createElement("button"); remove.type = "button"; remove.className = "kz-mini"; remove.textContent = "Remove";
+    const btns = document.createElement("div"); btns.className = "kz-imgbtns"; btns.append(replace, remove);
+    const right = document.createElement("div"); right.style.flex = "1"; right.style.minWidth = "0"; right.append(meta, btns);
+    row.append(thumb, right);
+    container.append(label, input, addBtn, row);
+
+    const pick = () => input.click();
+    addBtn.addEventListener("click", pick); replace.addEventListener("click", pick);
+    remove.addEventListener("click", () => store.set(key, null));
+    input.addEventListener("change", e => {
+      const f = e.target.files[0]; e.target.value = ""; if (!f) return;
+      const rd = new FileReader();
+      rd.onload = () => { const src = rd.result; const im = new Image(); im.onload = () => store.set(key, { src, width: im.naturalWidth, height: im.naturalHeight, name: f.name }); im.src = src; };
+      rd.readAsDataURL(f);
+    });
+    const refresh = () => {
+      const v = store.get()[key];
+      if (v && v.src) { addBtn.style.display = "none"; row.style.display = "flex"; thumb.src = v.src; meta.textContent = `${v.width}×${v.height}` + (v.name ? " · " + v.name : ""); }
+      else { addBtn.style.display = "flex"; row.style.display = "none"; }
+    };
+    refresh();
+    return { node: container, refresh };
+  }
+
   function renderField(key, field, store) {
     switch (field.type) {
       case "slider": return renderNumeric(key, field, store, true);
@@ -505,6 +549,7 @@
       case "color": return renderColor(key, field, store);
       case "toggle": return renderToggle(key, field, store);
       case "text": return renderText(key, field, store);
+      case "image": return renderImage(key, field, store);
       default: { const d = document.createElement("div"); d.textContent = "Unsupported field: " + field.type; return { node: d, refresh() {} }; }
     }
   }
@@ -584,8 +629,31 @@
     const fps = tool.fps || 30;
     const totalFrames = Math.max(1, Math.round((tool.duration || 0) * fps));
     const sub = new Set();               // frame listeners (transport sync)
+    const imageCache = new Map();        // dataURL src -> ImageBitmap | null(decoding)
     let current = null, canvas = null, ctx2d = null, cw = 0, ch = 0;
     let pos = 0, playing = false, rafId = null, lastTs = 0;
+
+    // Replace each image field's serialisable value with a decoded ImageBitmap
+    // (or null while decoding / absent). Decodes are cached; a finished decode re-renders.
+    function resolveState(state) {
+      let resolved = null;
+      const settings = tool.settings || {};
+      for (const key in settings) {
+        if (settings[key].type !== "image") continue;
+        resolved = resolved || Object.assign({}, state);
+        const v = state[key];
+        if (v && v.src) {
+          let bmp = imageCache.get(v.src);
+          if (bmp === undefined) {
+            imageCache.set(v.src, null);
+            fetch(v.src).then(r => r.blob()).then(createImageBitmap).then(b => { imageCache.set(v.src, b); render(); }).catch(() => {});
+            bmp = null;
+          }
+          resolved[key] = bmp ? { bitmap: bmp, width: v.width, height: v.height, name: v.name } : null;
+        } else { resolved[key] = null; }
+      }
+      return resolved || state;
+    }
 
     function sizeOf(state, el) {
       if (tool.size) return tool.size(state);
@@ -594,7 +662,7 @@
     }
     // Render a specific frame index. Static tools (animated=false) ignore idx.
     function renderAt(idx) {
-      const state = store.get();
+      const state = resolveState(store.get());
       const t = animated ? idx / fps : 0;
       const ctx = makeCtx(tool, state, mode, { frameIndex: idx, t, animated });
       if (tool.render === "canvas") {
