@@ -236,7 +236,6 @@ asset tool needs them.
 ├── tools/
 │   ├── _template.html    # minimal worked example — copy this to start a new tool
 │   └── dither-shape.html # the Shape generator, ported onto the runtime          (Phase 3)
-├── dither-shape.html     # the ORIGINAL monolith — reference/spec, ported then retired
 └── .claude/launch.json   # local static-server config for the preview tooling
 ```
 
