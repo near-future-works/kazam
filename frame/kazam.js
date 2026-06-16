@@ -740,7 +740,7 @@
     preview.render();
     post({
       type: "kazam/ready",
-      tool: { id: tool.id, name: tool.name, render: tool.render, duration: tool.duration || 0, exportFormats: tool.exportFormats || ["svg", "png"], preview: tool.preview || null },
+      tool: { id: tool.id, name: tool.name, tagline: tool.tagline || "", render: tool.render, duration: tool.duration || 0, exportFormats: tool.exportFormats || ["svg", "png"], preview: tool.preview || null },
       schema: schemaForWire(), groups: tool.groups || null, state: store.get(),
     });
   }

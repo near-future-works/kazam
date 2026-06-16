@@ -18,7 +18,9 @@
   .host-theme { width: 26px; height: 26px; border: 1px solid hsl(var(--border)); border-radius: calc(var(--radius) - 2px);
     background: none; color: hsl(var(--muted-foreground)); cursor: pointer; }
   .host-theme:hover { color: hsl(var(--foreground)); }
-  .host-toolsel { padding: 0 16px 12px; border-bottom: 1px solid hsl(var(--border)); }
+  .host-toolsel { padding: 0 16px 12px; }
+  .host-tooldesc { color: hsl(var(--muted-foreground)); font-size: 11px; line-height: 1.4; margin-top: 8px; }
+  .host-tooldesc:empty { display: none; }
   .host-stage { position: relative; overflow: hidden; }
   .host-frame { width: 100%; height: 100%; border: 0; display: block; }
   .host-bar { position: absolute; top: 10px; right: 10px; z-index: 2; display: flex; align-items: center; gap: 6px;
@@ -38,6 +40,16 @@
       </div>
       <div class="host-toolsel">
         <select class="kz-select" id="toolSel"></select>
+        <div class="host-tooldesc" id="toolDesc"></div>
+      </div>
+      <div class="kz-section">
+        <div class="kz-sechead"><h2>Tool</h2></div>
+        <div class="kz-btnrow">
+          <button class="kz-btn" id="copyTool">Copy</button>
+          <button class="kz-btn" id="downloadTool">Download</button>
+          <button class="kz-btn" id="importTool">Import</button>
+        </div>
+        <input type="file" id="importInput" accept=".html,text/html" style="display:none">
       </div>
       <div id="controls"></div>
       <div class="kz-section" id="presetSection">
@@ -77,7 +89,9 @@ const frame = document.getElementById("toolFrame");
 const controls = document.getElementById("controls");
 const exportRow = document.getElementById("exportRow");
 let current = null;          // { tool, store, unsub }
+let currentPath = null;      // path/URL of the loaded tool file
 let reqId = 0; const pending = {};
+let importN = 0;
 let pbg = "#ebf1e5";         // host-side preview backdrop
 
 const post = msg => frame.contentWindow.postMessage(Object.assign({ v: V }, msg), "*");
@@ -88,8 +102,9 @@ const toolSel = document.getElementById("toolSel");
 TOOLS.forEach(t => { const o = document.createElement("option"); o.value = t.id; o.textContent = t.name; toolSel.appendChild(o); });
 toolSel.addEventListener("change", () => loadTool(TOOLS.find(t => t.id === toolSel.value)));
 function loadTool(t) {
-  current = null;
+  current = null; currentPath = t.path;
   controls.innerHTML = ""; exportRow.innerHTML = "";
+  document.getElementById("toolDesc").textContent = "";
   frame.src = t.path;       // framed: the tool's runtime detects window.self !== top
 }
 
@@ -104,7 +119,8 @@ function onReady(d) {
   const store = Kazam.host.createStore(d.state);
   Kazam.host.buildPanel(controls, { settings: d.schema, groups: d.groups }, store, /* pair */ true);
   const unsub = store.subscribe(() => post({ type: "kazam/state", state: store.get() }));
-  current = { tool: d.tool, store, unsub };
+  current = { tool: d.tool, store, unsub, path: currentPath };
+  document.getElementById("toolDesc").textContent = d.tool.tagline || "";
 
   buildExport(d.tool.exportFormats || ["svg", "png"]);
 
@@ -134,6 +150,38 @@ function onExportResult(d) {
   if (d.payload.kind === "text") Kazam.host.download(new Blob([d.payload.text], { type: "image/svg+xml" }), `${id}.svg`);
   else Kazam.host.download(d.payload.blob, `${id}@${p.scale || 2}x.png`);
 }
+
+// ---- tool file: copy / download / import ----
+// Inline the host's kazam.js into a tool's source so it becomes a single
+// self-contained file (and so blob-URL imports resolve their runtime).
+async function inlineRuntime(raw) {
+  if (!/src=["'][^"']*kazam\.js["']/i.test(raw)) return raw; // already self-contained
+  const rt = await fetch("kazam.js").then(r => r.text());
+  return raw.replace(/<script\b[^>]*\bsrc=["'][^"']*kazam\.js["'][^>]*>\s*<\/script>/i, "<script>\n" + rt + "\n<\/script>");
+}
+async function selfContainedSource() {
+  const raw = await fetch(currentPath).then(r => r.text());
+  return inlineRuntime(raw);
+}
+document.getElementById("copyTool").addEventListener("click", async () => {
+  if (current) navigator.clipboard.writeText(await selfContainedSource());
+});
+document.getElementById("downloadTool").addEventListener("click", async () => {
+  if (!current) return;
+  Kazam.host.download(new Blob([await selfContainedSource()], { type: "text/html" }), `${current.tool.id}.html`);
+});
+const importInput = document.getElementById("importInput");
+document.getElementById("importTool").addEventListener("click", () => importInput.click());
+importInput.addEventListener("change", async e => {
+  const file = e.target.files[0]; e.target.value = ""; if (!file) return;
+  const html = await inlineRuntime(await file.text());          // inline runtime if the file references it
+  const url = URL.createObjectURL(new Blob([html], { type: "text/html" }));
+  const id = "imported-" + (++importN), name = file.name.replace(/\.html?$/i, "");
+  const entry = { id, name, path: url };
+  TOOLS.push(entry);
+  const o = document.createElement("option"); o.value = id; o.textContent = name + " (imported)"; toolSel.appendChild(o);
+  toolSel.value = id; loadTool(entry);
+});
 
 // ---- presets ----
 document.getElementById("copyJson").addEventListener("click", () => current && navigator.clipboard.writeText(current.store.serialise()));
