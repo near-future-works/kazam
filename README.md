@@ -10,21 +10,15 @@ runtime talk), and [`tools/_template.html`](tools/_template.html) for the minima
 ## Layout
 
 - `frame/` — the runtime (`kazam.js`) and host app (`index.html`).
-- `tools/` — single-file tools, including the `_template.html` starter.
-- `dither-shape.html` — the original monolithic Shape Generator. It implies this
-  architecture and is the reference being extracted into the frame, then ported to
-  `tools/dither-shape.html` as the first tool to run on the runtime.
+- `tools/` — single-file tools (Shape Generator, Pixelator, Letterfall, …) plus the
+  `_template.html` starter.
+- `tests/` — runtime tests (`npm test`); `tsconfig.json` drives `npm run typecheck`.
 
-## Status
+## Running
 
-Phase 1 (scaffold + contract). The runtime and ported tool land in later phases — see the
-build order at the end of `CLAUDE.md`.
-
-## The original tool (reference)
-
-[`dither-shape.html`](dither-shape.html) generates a shape filled with ordered or organic
-dithered dots and exports scalable SVG / high-res PNG. Open it directly, or serve locally:
+No build step. Open any tool directly (e.g. `tools/dither-shape.html`), or serve the host
+to switch between tools, theme, and export:
 
 ```sh
-python3 -m http.server 4173   # then visit http://localhost:4173/dither-shape.html
+python3 -m http.server 4173   # then visit http://localhost:4173/frame/index.html
 ```
