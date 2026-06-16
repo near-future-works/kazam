@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en" class="kz-root dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Kazam</title>
+<script src="kazam.js"></script>
+<style>
+  /* Host chrome. Reuses Kazam's injected tokens + component CSS (kz-*). */
+  body { margin: 0; }
+  .host { display: grid; grid-template-columns: 340px 1fr; height: 100vh;
+    font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    background: hsl(var(--background)); color: hsl(var(--foreground)); }
+  .host-side { background: hsl(var(--card)); border-right: 1px solid hsl(var(--border)); overflow-y: auto; }
+  .host-top { padding: 12px 16px; display: flex; align-items: center; gap: 8px; }
+  .host-top .brand { font-size: 13px; font-weight: 600; }
+  .host-top .spacer { flex: 1; }
+  .host-theme { width: 26px; height: 26px; border: 1px solid hsl(var(--border)); border-radius: calc(var(--radius) - 2px);
+    background: none; color: hsl(var(--muted-foreground)); cursor: pointer; }
+  .host-theme:hover { color: hsl(var(--foreground)); }
+  .host-toolsel { padding: 0 16px 12px; border-bottom: 1px solid hsl(var(--border)); }
+  .host-stage { position: relative; overflow: hidden; }
+  .host-frame { width: 100%; height: 100%; border: 0; display: block; }
+  .host-bar { position: absolute; top: 10px; right: 10px; z-index: 2; display: flex; align-items: center; gap: 6px;
+    background: hsl(var(--card) / .72); border: 1px solid hsl(var(--border)); border-radius: calc(var(--radius) - 2px); padding: 4px 6px; }
+  .host-bar .lbl { color: hsl(var(--muted-foreground)); font-size: 11px; }
+  .host-bar .sw { width: 20px; height: 20px; padding: 0; border: 1px solid hsl(var(--input)); border-radius: 4px; cursor: pointer; background-clip: padding-box; }
+  .host-bar .clr { width: 16px; height: 20px; border: none; background: none; color: hsl(var(--muted-foreground)); cursor: pointer; }
+  .host-pick { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+</style>
+</head>
+<body>
+  <div class="host">
+    <aside class="host-side">
+      <div class="host-top">
+        <span class="brand">Kazam</span>
+        <span class="spacer"></span>
+        <button class="host-theme" id="themeBtn" title="Toggle theme">◑</button>
+      </div>
+      <div class="host-toolsel">
+        <select class="kz-select" id="toolSel"></select>
+      </div>
+      <div id="controls"></div>
+      <div class="kz-section" id="presetSection">
+        <div class="kz-sechead"><h2>Presets</h2></div>
+        <div class="kz-btnrow">
+          <button class="kz-mini" id="copyJson">Copy JSON</button>
+          <button class="kz-mini" id="copyMd">Copy Markdown</button>
+          <button class="kz-mini" id="loadState">Load</button>
+        </div>
+      </div>
+      <div class="kz-section" id="exportSection">
+        <div class="kz-sechead"><h2>Export</h2></div>
+        <div class="kz-btnrow" id="exportRow"></div>
+      </div>
+    </aside>
+    <main class="host-stage">
+      <div class="host-bar">
+        <span class="lbl">Backdrop</span>
+        <button class="sw" id="pbgSw" title="Preview background"></button>
+        <input type="color" class="host-pick" id="pbgPick" value="#ebf1e5">
+        <button class="clr" id="pbgClr" title="Transparent">×</button>
+      </div>
+      <iframe class="host-frame" id="toolFrame"></iframe>
+    </main>
+  </div>
+
+<script>
+const V = Kazam.version;
+const CHECKER = "repeating-conic-gradient(#9aa0ac 0% 25%, #f5f6f8 0% 50%) 50% / 12px 12px";
+
+const TOOLS = [
+  { id: "dither-shape", name: "Shape Generator", path: "../tools/dither-shape.html" },
+  { id: "starter",      name: "Starter",         path: "../tools/_template.html" },
+];
+
+const frame = document.getElementById("toolFrame");
+const controls = document.getElementById("controls");
+const exportRow = document.getElementById("exportRow");
+let current = null;          // { tool, store, unsub }
+let reqId = 0; const pending = {};
+let pbg = "#ebf1e5";         // host-side preview backdrop
+
+const post = msg => frame.contentWindow.postMessage(Object.assign({ v: V }, msg), "*");
+const isDark = () => document.documentElement.classList.contains("dark");
+
+// ---- tool switcher ----
+const toolSel = document.getElementById("toolSel");
+TOOLS.forEach(t => { const o = document.createElement("option"); o.value = t.id; o.textContent = t.name; toolSel.appendChild(o); });
+toolSel.addEventListener("change", () => loadTool(TOOLS.find(t => t.id === toolSel.value)));
+function loadTool(t) {
+  current = null;
+  controls.innerHTML = ""; exportRow.innerHTML = "";
+  frame.src = t.path;       // framed: the tool's runtime detects window.self !== top
+}
+
+// ---- handshake + wiring ----
+window.addEventListener("message", e => {
+  const d = e.data; if (!d || d.v !== V) return;
+  if (d.type === "kazam/ready") onReady(d);
+  else if (d.type === "kazam/export-result") onExportResult(d);
+});
+
+function onReady(d) {
+  const store = Kazam.host.createStore(d.state);
+  Kazam.host.buildPanel(controls, { settings: d.schema, groups: d.groups }, store, /* pair */ true);
+  const unsub = store.subscribe(() => post({ type: "kazam/state", state: store.get() }));
+  current = { tool: d.tool, store, unsub };
+
+  buildExport(d.tool.exportFormats || ["svg", "png"]);
+
+  // initial preview backdrop: tool's hint unless the host already has one
+  if (d.tool.preview && d.tool.preview.background && pbg === "#ebf1e5") pbg = d.tool.preview.background;
+  applyPbg();
+  post({ type: "kazam/tokens", dark: isDark() });
+}
+
+// ---- export ----
+let scaleSel;
+function buildExport(formats) {
+  exportRow.innerHTML = "";
+  if (formats.includes("svg")) addBtn("SVG", "kz-btn", () => requestExport("svg"));
+  if (formats.includes("png")) {
+    addBtn("PNG", "kz-btn kz-primary", () => requestExport("png", +scaleSel.value));
+    scaleSel = document.createElement("select"); scaleSel.className = "kz-select kz-scale";
+    [1, 2, 4].forEach(s => { const o = document.createElement("option"); o.value = s; o.textContent = s + "×"; if (s === 2) o.selected = true; scaleSel.appendChild(o); });
+    exportRow.appendChild(scaleSel);
+  }
+}
+function addBtn(text, cls, fn) { const b = document.createElement("button"); b.className = cls; b.textContent = text; b.addEventListener("click", fn); exportRow.appendChild(b); }
+function requestExport(format, scale) { const id = ++reqId; pending[id] = { format, scale }; post({ type: "kazam/export", requestId: id, format, scale }); }
+function onExportResult(d) {
+  const p = pending[d.requestId]; if (!p) return; delete pending[d.requestId];
+  const id = current.tool.id;
+  if (d.payload.kind === "text") Kazam.host.download(new Blob([d.payload.text], { type: "image/svg+xml" }), `${id}.svg`);
+  else Kazam.host.download(d.payload.blob, `${id}@${p.scale || 2}x.png`);
+}
+
+// ---- presets ----
+document.getElementById("copyJson").addEventListener("click", () => current && navigator.clipboard.writeText(current.store.serialise()));
+document.getElementById("copyMd").addEventListener("click", () => {
+  if (!current) return;
+  const s = current.store.get();
+  const md = `# ${current.tool.name} preset\n\n` + Object.keys(s).map(k => `- **${k}**: ${JSON.stringify(s[k])}`).join("\n") + "\n";
+  navigator.clipboard.writeText(md);
+});
+document.getElementById("loadState").addEventListener("click", () => { if (!current) return; const j = prompt("Paste state JSON"); if (j) current.store.deserialise(j); });
+
+// ---- theme ----
+document.getElementById("themeBtn").addEventListener("click", () => {
+  document.documentElement.classList.toggle("dark");
+  post({ type: "kazam/tokens", dark: isDark() });
+});
+
+// ---- preview backdrop ----
+const pbgSw = document.getElementById("pbgSw"), pbgPick = document.getElementById("pbgPick"), pbgClr = document.getElementById("pbgClr");
+function applyPbg() { pbgSw.style.background = pbg || CHECKER; post({ type: "kazam/preview-bg", color: pbg || null }); }
+pbgSw.addEventListener("click", () => pbgPick.click());
+pbgPick.addEventListener("input", () => { pbg = pbgPick.value; applyPbg(); });
+pbgClr.addEventListener("click", () => { pbg = null; applyPbg(); });
+
+// ---- boot ----
+loadTool(TOOLS[0]);
+</script>
+</body>
+</html>

@@ -709,13 +709,20 @@
     window.addEventListener("message", e => {
       const d = e.data; if (!d || d.v !== PROTOCOL) return;
       if (d.type === "kazam/state") store.replace(d.state);
+      else if (d.type === "kazam/tokens") { document.documentElement.classList.toggle("dark", !!d.dark); preview.render(); }
+      else if (d.type === "kazam/preview-bg") { fill.style.background = d.color || "transparent"; }
       else if (d.type === "kazam/export") {
         if (d.format === "svg") post({ type: "kazam/export-result", requestId: d.requestId, format: "svg", ok: true, payload: { kind: "text", text: svgString(preview.current) } });
         else rasterise(preview.current, d.scale || 2, b => post({ type: "kazam/export-result", requestId: d.requestId, format: "png", ok: true, payload: { kind: "blob", blob: b } }));
       }
     });
+    if (tool.preview && tool.preview.background) fill.style.background = tool.preview.background;
     preview.render();
-    post({ type: "kazam/ready", tool: { id: tool.id, name: tool.name, render: tool.render, duration: tool.duration || 0, exportFormats: tool.exportFormats || ["svg", "png"] }, schema: schemaForWire(), groups: tool.groups || null, state: store.get() });
+    post({
+      type: "kazam/ready",
+      tool: { id: tool.id, name: tool.name, render: tool.render, duration: tool.duration || 0, exportFormats: tool.exportFormats || ["svg", "png"], preview: tool.preview || null },
+      schema: schemaForWire(), groups: tool.groups || null, state: store.get(),
+    });
   }
 
   // ------------------------------------------------------------- entry
@@ -730,5 +737,14 @@
     return tool;
   }
 
-  window.Kazam = { defineTool, version: PROTOCOL };
+  // Inject tokens + component CSS as soon as the runtime loads, so both tools
+  // and the frame host (which includes this file without calling defineTool) are styled.
+  injectStyles();
+
+  // Host-side helpers: the frame app (frame/index.html) includes this same file
+  // and uses these to build the controls panel + state store around tool iframes.
+  window.Kazam = {
+    defineTool, version: PROTOCOL,
+    host: { createStore, resolveDefaults, buildPanel, resolveTokens, download },
+  };
 })();
