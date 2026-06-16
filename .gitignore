@@ -1,0 +1,3 @@
+# Dev-only tooling (type-checking + tests). None of this ships — tools stay
+# plain, double-clickable HTML. See CLAUDE.md › "Dev tooling".
+node_modules/

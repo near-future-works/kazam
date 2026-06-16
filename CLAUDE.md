@@ -251,6 +251,33 @@ authoring step, never required to run; see open question below.)
 
 ---
 
+## Dev tooling (type-checking + tests — never ships)
+
+The "no server, no terminal, no install to *run* a tool" promise is about the **shipped
+files**. Authoring may use dev-only tooling, as long as the output stays plain HTML/JS/CSS.
+Two checks exist; both are optional to run and invisible to a tool user:
+
+- **Type-checking the contract.** `frame/contract.d.ts` is the machine-checkable form of this
+  document — the settings `Field` union, `ToolDef`, `Ctx`, the store, and the `postMessage`
+  messages as discriminated unions. `frame/kazam.js` opts in with `// @ts-check` and is checked
+  against it (a typo'd `kazam/*` message name or a wrong `payload.kind` is now a type error, not
+  a silent failure). Run `npm run typecheck` — `tsc` (fetched on demand via `npx`) emits nothing.
+  Checking is **opt-in per file** via `// @ts-check`; `noImplicitAny` is off so internal closures
+  stay terse, while `strictNullChecks` still catches the silent-failure class. **When you change
+  the contract, update `contract.d.ts` and CLAUDE.md together** — they must agree.
+- **Tests for the pure logic.** `tests/*.test.js` use Node's built-in test runner (zero deps):
+  `npm test` (or `node --test`). They cover the seeded RNG determinism + hash order-independence,
+  colour maths, the GIF encoder (LZW round-trip + median-cut), the field-display + store helpers,
+  and the inliner. To make this possible without a build, `frame/kazam.js` is `require()`-able in
+  Node: its two top-level DOM side-effects are guarded (`typeof document`/`window`), and it
+  `module.exports` the pure helpers — all behind guards that are dead code in a browser, so the
+  shipped/inlined path is byte-for-byte unaffected.
+
+`package.json` holds only `devDependencies` (TypeScript) + these two scripts; `node_modules/`
+is git-ignored. Nothing here is needed to open a tool.
+
+---
+
 ## Resolved decisions
 
 1. **Runtime include / distribution.** Dev: tools reference `../frame/kazam.js` (relative,
