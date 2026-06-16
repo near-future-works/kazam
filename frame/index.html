@@ -32,13 +32,14 @@
   .host-action + .host-action { margin-top: 14px; }
   .host-action .kz-btn { width: 100%; }
   .host-action-desc { font-size: 11px; color: hsl(var(--muted-foreground)); margin-top: 5px; line-height: 1.4; }
-  .host-disc-secondary { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 14px; }
+  /* frame-wide controls (backdrop + theme), tucked into Tool settings */
+  .host-framectrls { margin-top: 16px; display: flex; flex-direction: column; gap: 10px; }
+  .host-fieldrow { display: flex; align-items: center; gap: 8px; }
+  .host-fieldrow > span:first-child { color: hsl(var(--muted-foreground)); font-size: 12px; }
+  .host-fieldrow .spacer { flex: 1; }
+  .host-fieldrow .sw { width: 22px; height: 22px; padding: 0; border: 1px solid hsl(var(--input)); border-radius: 4px; cursor: pointer; background-clip: padding-box; }
   .host-stage { position: relative; overflow: hidden; }
   .host-frame { width: 100%; height: 100%; border: 0; display: block; }
-  .host-bar { position: absolute; top: 10px; right: 10px; z-index: 2; display: flex; align-items: center; gap: 6px;
-    background: hsl(var(--card) / .25); border: 1px solid hsl(var(--border) / .5); border-radius: calc(var(--radius) - 2px); padding: 4px 6px; }
-  .host-bar .sw { width: 20px; height: 20px; padding: 0; border: 1px solid hsl(var(--input)); border-radius: 4px; cursor: pointer; background-clip: padding-box; }
-  .host-bar .clr { width: 16px; height: 20px; border: none; background: none; color: hsl(var(--muted-foreground)); cursor: pointer; }
   .host-pick { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
 </style>
 </head>
@@ -47,8 +48,6 @@
     <aside class="host-side">
       <div class="host-top">
         <span class="brand">Kazam</span>
-        <span class="spacer"></span>
-        <button class="host-theme" id="themeBtn" title="Toggle theme">◑</button>
       </div>
       <div class="host-toolsel">
         <select class="kz-select" id="toolSel"></select>
@@ -68,12 +67,18 @@
             <button class="kz-btn" id="copyHtml">Copy tool as HTML</button>
             <div class="host-action-desc">Send it to a teammate to drop into their own Kazam.</div>
           </div>
-          <div class="host-disc-secondary">
-            <button class="kz-mini" id="importTool">Import a tool…</button>
-            <button class="kz-mini" id="loadPreset">Load settings…</button>
-            <button class="kz-mini" id="downloadTool">Download .html</button>
+          <div class="host-framectrls">
+            <div class="host-fieldrow">
+              <span>Background</span><span class="spacer"></span>
+              <button class="sw" id="pbgSw" title="Preview background"></button>
+              <button class="kz-mini" id="pbgClr">Clear</button>
+              <input type="color" class="host-pick" id="pbgPick" value="#888888">
+            </div>
+            <div class="host-fieldrow">
+              <span>Dark mode</span><span class="spacer"></span>
+              <button class="kz-switch" id="themeSwitch" aria-checked="true"></button>
+            </div>
           </div>
-          <input type="file" id="importInput" accept=".html,text/html" style="display:none">
         </div>
       </div>
       <div id="controls"></div>
@@ -83,11 +88,6 @@
       </div>
     </aside>
     <main class="host-stage">
-      <div class="host-bar">
-        <button class="sw" id="pbgSw" title="Preview background"></button>
-        <input type="color" class="host-pick" id="pbgPick" value="#ebf1e5">
-        <button class="clr" id="pbgClr" title="Transparent">×</button>
-      </div>
       <iframe class="host-frame" id="toolFrame"></iframe>
     </main>
   </div>
@@ -111,18 +111,18 @@ const exportRow = document.getElementById("exportRow");
 let current = null;          // { tool, store, unsub }
 let currentPath = null;      // path/URL of the loaded tool file
 let reqId = 0; const pending = {};
-let importN = 0;
-let pbg = "#ebf1e5";         // host-side preview backdrop
+let pbg = null, pbgManual = false;          // host-side preview backdrop
 
 const post = msg => frame.contentWindow.postMessage(Object.assign({ v: V }, msg), "*");
 const isDark = () => document.documentElement.classList.contains("dark");
+const neutralBg = () => isDark() ? "#14151a" : "#f1f1f4";
 
 // ---- tool switcher ----
 const toolSel = document.getElementById("toolSel");
 TOOLS.forEach(t => { const o = document.createElement("option"); o.value = t.id; o.textContent = t.name; toolSel.appendChild(o); });
 toolSel.addEventListener("change", () => loadTool(TOOLS.find(t => t.id === toolSel.value)));
 function loadTool(t) {
-  current = null; currentPath = t.path;
+  current = null; currentPath = t.path; pbgManual = false;   // each tool gets its own backdrop default
   controls.innerHTML = ""; exportRow.innerHTML = "";
   document.getElementById("toolDesc").textContent = "";
   frame.src = t.path;       // framed: the tool's runtime detects window.self !== top
@@ -144,8 +144,8 @@ function onReady(d) {
 
   buildExport(d.tool);
 
-  // initial preview backdrop: tool's hint unless the host already has one
-  if (d.tool.preview && d.tool.preview.background && pbg === "#ebf1e5") pbg = d.tool.preview.background;
+  // backdrop default: the tool's hint if it has one, else a neutral theme tone
+  if (!pbgManual) pbg = (d.tool.preview && d.tool.preview.background) || neutralBg();
   applyPbg();
   post({ type: "kazam/tokens", dark: isDark() });
 }
@@ -199,27 +199,13 @@ async function selfContainedSource() {
   const raw = await fetch(currentPath).then(r => r.text());
   return inlineRuntime(raw);
 }
-document.getElementById("copyHtml").addEventListener("click", async () => {
-  if (current) navigator.clipboard.writeText(await selfContainedSource());
-});
-document.getElementById("downloadTool").addEventListener("click", async () => {
+document.getElementById("copyHtml").addEventListener("click", async (e) => {
   if (!current) return;
-  Kazam.host.download(new Blob([await selfContainedSource()], { type: "text/html" }), `${current.tool.id}.html`);
-});
-const importInput = document.getElementById("importInput");
-document.getElementById("importTool").addEventListener("click", () => importInput.click());
-importInput.addEventListener("change", async e => {
-  const file = e.target.files[0]; e.target.value = ""; if (!file) return;
-  const html = await inlineRuntime(await file.text());          // inline runtime if the file references it
-  const url = URL.createObjectURL(new Blob([html], { type: "text/html" }));
-  const id = "imported-" + (++importN), name = file.name.replace(/\.html?$/i, "");
-  const entry = { id, name, path: url };
-  TOOLS.push(entry);
-  const o = document.createElement("option"); o.value = id; o.textContent = name + " (imported)"; toolSel.appendChild(o);
-  toolSel.value = id; loadTool(entry);
+  navigator.clipboard.writeText(await selfContainedSource());
+  Kazam.host.flashCopied(e.currentTarget, "Copied!");
 });
 
-// ---- disclosure (Tool & presets) ----
+// ---- disclosure (Tool settings) ----
 const discToggle = document.getElementById("discToggle"), discBody = document.getElementById("discBody");
 discToggle.addEventListener("click", () => {
   const open = discToggle.getAttribute("aria-expanded") === "true";
@@ -228,34 +214,29 @@ discToggle.addEventListener("click", () => {
 });
 
 // ---- "Copy current settings": a Claude-ready instruction with an embedded JSON block ----
-document.getElementById("copySettings").addEventListener("click", () => {
+document.getElementById("copySettings").addEventListener("click", (e) => {
   if (!current) return;
   const txt =
     `Set these as the default values for the "${current.tool.name}" Kazam tool — ` +
     `update each field's \`default\` in the settings schema to match:\n\n` +
     "```json\n" + current.store.serialise() + "\n```\n";
   navigator.clipboard.writeText(txt);
+  Kazam.host.flashCopied(e.currentTarget, "Copied!");
 });
-document.getElementById("loadPreset").addEventListener("click", () => {
-  if (!current) return;
-  const txt = prompt("Paste preset (Markdown or JSON)");
-  if (!txt) return;
-  const m = txt.match(/```json\s*([\s\S]*?)```/i) || txt.match(/\{[\s\S]*\}/);
-  current.store.deserialise(m ? (m[1] || m[0]) : txt);
-});
-
-// ---- theme ----
-document.getElementById("themeBtn").addEventListener("click", () => {
-  document.documentElement.classList.toggle("dark");
-  post({ type: "kazam/tokens", dark: isDark() });
-});
-
-// ---- preview backdrop ----
+// ---- frame controls: backdrop + theme (in Tool settings) ----
 const pbgSw = document.getElementById("pbgSw"), pbgPick = document.getElementById("pbgPick"), pbgClr = document.getElementById("pbgClr");
 function applyPbg() { pbgSw.style.background = pbg || CHECKER; post({ type: "kazam/preview-bg", color: pbg || null }); }
 pbgSw.addEventListener("click", () => pbgPick.click());
-pbgPick.addEventListener("input", () => { pbg = pbgPick.value; applyPbg(); });
-pbgClr.addEventListener("click", () => { pbg = null; applyPbg(); });
+pbgPick.addEventListener("input", () => { pbg = pbgPick.value; pbgManual = true; applyPbg(); });
+pbgClr.addEventListener("click", () => { pbg = null; pbgManual = true; applyPbg(); });
+
+const themeSwitch = document.getElementById("themeSwitch");
+themeSwitch.addEventListener("click", () => {
+  document.documentElement.classList.toggle("dark");
+  themeSwitch.setAttribute("aria-checked", String(isDark()));
+  post({ type: "kazam/tokens", dark: isDark() });
+  if (!pbgManual) { pbg = neutralBg(); applyPbg(); }
+});
 
 // ---- boot ----
 loadTool(TOOLS[0]);

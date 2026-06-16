@@ -100,6 +100,7 @@
   .kz-field.kz-scrubbing::after, .kz-field:focus-within.kz-scrub::after { background: hsl(var(--ring)); }
   body.kz-scrubbing, body.kz-scrubbing * { user-select: none; cursor: ew-resize !important; }
 
+  .kz-field input.kz-autoval { color: hsl(var(--muted-foreground)); }
   input[type="number"].kz-num { appearance: textfield; -moz-appearance: textfield; }
   input[type="number"].kz-num::-webkit-outer-spin-button,
   input[type="number"].kz-num::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
@@ -175,6 +176,8 @@
   .kz-scale { width: auto; flex: 0 0 auto; }
   .kz-mini { background: none; border: none; color: hsl(var(--muted-foreground)); font: inherit; cursor: pointer; padding: 2px 4px; }
   .kz-mini:hover { color: hsl(var(--foreground)); }
+  @keyframes kz-pop { 0% { transform: scale(1); } 30% { transform: scale(.93) rotate(-2deg); } 60% { transform: scale(1.05) rotate(1.5deg); } 100% { transform: scale(1); } }
+  .kz-pop { animation: kz-pop .32s ease; }
 
   /* stage */
   .kz-stage {
@@ -366,7 +369,16 @@
     };
     const fillFrac = () => (store.get()[key] - field.min) / (field.max - field.min);
 
-    input.addEventListener("input", () => { if (input.value !== "") setFromDisplay(+input.value); });
+    // `auto` fields: empty value = automatic (shows the computed value greyed); typing fixes it.
+    // field.auto is a STRING expression over the state (so it survives postMessage to the host).
+    const autoVal = (state) => {
+      if (typeof field.auto === "function") return field.auto(state);
+      try { return Function("s", "with(s){ return (" + field.auto + "); }")(state); } catch (e) { return field.min; }
+    };
+    input.addEventListener("input", () => {
+      if (input.value === "") { if (field.auto) store.set(key, null); }
+      else setFromDisplay(+input.value);
+    });
     if (isSlider) {
       const step = field.step || 1;
       const dec = String(step).includes(".") ? String(step).split(".")[1].length : 0;
@@ -383,11 +395,14 @@
         fillFrac);
     }
     const refresh = () => {
-      if (document.activeElement !== input) input.value = toDisplay(field, store.get()[key]);
+      const v = store.get()[key];
+      const auto = field.auto && (v == null);
+      if (document.activeElement !== input) input.value = toDisplay(field, auto ? autoVal(store.get()) : v);
+      input.classList.toggle("kz-autoval", !!auto);
       if (isSlider) fieldEl.style.setProperty("--fill", Math.max(0, Math.min(1, fillFrac())) * 100 + "%");
     };
     refresh();
-    return { node: wrap, refresh };
+    return { node: wrap, refresh, auto: !!field.auto };
   }
 
   function renderSelect(key, field, store) {
@@ -443,8 +458,10 @@
   }
 
   function renderColor(key, field, store) {
-    const row = document.createElement("div"); row.className = "kz-color-row";
-    const clabel = document.createElement("span"); clabel.className = "kz-flabel"; clabel.style.margin = "0"; clabel.style.width = "84px"; clabel.style.flex = "none"; clabel.textContent = field.label || key;
+    const half = field.col === "half";   // half-width → label above; full → inline 84px label
+    const label = document.createElement(half ? "label" : "span"); label.className = "kz-flabel";
+    if (!half) { label.style.margin = "0"; label.style.width = "84px"; label.style.flex = "none"; }
+    label.textContent = field.label || key;
 
     const cfield = document.createElement("div"); cfield.className = "kz-cfield";
     const swatch = document.createElement("button"); swatch.type = "button"; swatch.className = "kz-swatch";
@@ -480,10 +497,10 @@
       () => (get() ? (get().opacity ?? 1) : 1));
     addBtn.addEventListener("click", () => store.set(key, { hex: picker.value || "#ffffff", opacity: 1 }));
 
-    row.append(clabel, cfield);
-
     const container = document.createElement("div");
-    container.append(row);
+    let shell;                              // the element shown/hidden for optional colours
+    if (half) { shell = document.createElement("div"); shell.append(label, cfield); container.append(shell); }
+    else { shell = document.createElement("div"); shell.className = "kz-color-row"; shell.append(label, cfield); container.append(shell); }
     if (field.optional) container.append(addBtn);
 
     const refresh = () => {
@@ -496,7 +513,7 @@
       opwrap.style.setProperty("--fill", Math.round(op * 100) + "%");
       if (field.optional) {
         const has = c !== null && c !== undefined;
-        row.style.display = has ? "flex" : "none";
+        shell.style.display = has ? (half ? "block" : "flex") : "none";
         addBtn.style.display = has ? "none" : "flex";
       }
     };
@@ -593,10 +610,13 @@
       }
       panel.appendChild(section);
     });
+    // `auto` fields depend on other fields, so refresh them on every change.
+    const autoKeys = Object.keys(settings).filter(k => settings[k].auto && byKey[k]);
     // refresh a field's DOM whenever its own value changes, or all on a full replace
     store.subscribe((_s, changedKey) => {
-      if (changedKey === null) Object.keys(byKey).forEach(k => byKey[k]());
-      else if (byKey[changedKey]) byKey[changedKey]();
+      if (changedKey === null) { Object.keys(byKey).forEach(k => byKey[k]()); return; }
+      if (byKey[changedKey]) byKey[changedKey]();
+      autoKeys.forEach(k => { if (k !== changedKey) byKey[k](); });
     });
     return byKey;
   }
@@ -702,6 +722,16 @@
   // ------------------------------------------------------------- export
   function svgString(el) {
     return '<?xml version="1.0" encoding="UTF-8"?>\n' + new XMLSerializer().serializeToString(el.cloneNode(true));
+  }
+  // brief press feedback for copy buttons: a pop/jiggle + a transient "Copied" label
+  function flashCopied(btn, okText) {
+    if (!btn) return;
+    const orig = btn.dataset.kzLabel || btn.textContent;
+    btn.dataset.kzLabel = orig;
+    btn.textContent = okText || "Copied";
+    btn.classList.remove("kz-pop"); void btn.offsetWidth; btn.classList.add("kz-pop");
+    clearTimeout(btn._kzT);
+    btn._kzT = setTimeout(() => { btn.textContent = btn.dataset.kzLabel; btn.classList.remove("kz-pop"); }, 1100);
   }
   function download(blob, filename) {
     const url = URL.createObjectURL(blob);
@@ -892,20 +922,40 @@
     return { autoplay() { player.play(); btn.innerHTML = PAUSE_SVG; } };
   }
 
-  // preview backdrop (the stage colour behind the artwork; preview-only, not exported)
-  function addPreviewBg(stage, fill, def) {
-    let value = def && !isTransparent(def) ? (normHex(def) || def) : null;
-    const wrap = document.createElement("div"); wrap.className = "kz-pbg";
-    const sw = document.createElement("button"); sw.type = "button"; sw.className = "kz-pbg-sw"; sw.title = "Preview background";
-    const picker = document.createElement("input"); picker.type = "color"; picker.className = "kz-picker"; picker.value = value || "#ebf1e5";
-    const clear = document.createElement("button"); clear.type = "button"; clear.className = "kz-pbg-clear"; clear.textContent = "×"; clear.title = "Transparent";
-    wrap.append(sw, picker, clear);
-    const apply = () => { sw.style.background = value || CHECKER; fill.style.background = value || "transparent"; };
+  // "Frame" section for the standalone panel: the preview backdrop colour (the stage
+  // behind the artwork — not exported) and the light/dark theme. Frame-wide controls,
+  // tucked into the panel rather than floating over the canvas.
+  function buildFrameSection(stage, fill, tool) {
+    const neutral = () => document.documentElement.classList.contains("dark") ? "#14151a" : "#f1f1f4";
+    let bg = (tool.preview && tool.preview.background && !isTransparent(tool.preview.background))
+      ? (normHex(tool.preview.background) || tool.preview.background) : neutral();
+    let bgManual = !!(tool.preview && tool.preview.background);
+
+    const section = document.createElement("div"); section.className = "kz-section";
+    const head = document.createElement("div"); head.className = "kz-sechead"; head.innerHTML = "<h2>Frame</h2>"; section.appendChild(head);
+
+    const bgRow = document.createElement("div"); bgRow.className = "kz-color-row";
+    const bgLabel = document.createElement("span"); bgLabel.className = "kz-flabel"; bgLabel.style.margin = "0"; bgLabel.style.width = "84px"; bgLabel.style.flex = "none"; bgLabel.textContent = "Background";
+    const sw = document.createElement("button"); sw.type = "button"; sw.className = "kz-swatch";
+    const picker = document.createElement("input"); picker.type = "color"; picker.className = "kz-picker"; picker.value = bg || "#888888";
+    const clear = document.createElement("button"); clear.type = "button"; clear.className = "kz-mini"; clear.textContent = "Clear";
+    bgRow.append(bgLabel, sw, clear, picker);
+
+    const applyBg = () => { fill.style.background = bg ? bg : "transparent"; sw.style.background = bg ? bg : CHECKER; };
     sw.addEventListener("click", () => picker.click());
-    picker.addEventListener("input", () => { value = picker.value; apply(); });
-    clear.addEventListener("click", () => { value = null; apply(); });
-    apply();
-    stage.appendChild(wrap);
+    picker.addEventListener("input", () => { bg = picker.value; bgManual = true; applyBg(); });
+    clear.addEventListener("click", () => { bg = null; bgManual = true; applyBg(); });
+
+    const thRow = document.createElement("div"); thRow.className = "kz-toggle";
+    const thLabel = document.createElement("span"); thLabel.className = "kz-tlabel"; thLabel.textContent = "Dark mode";
+    const thSwitch = document.createElement("button"); thSwitch.type = "button"; thSwitch.className = "kz-switch";
+    const syncTheme = () => thSwitch.setAttribute("aria-checked", String(document.documentElement.classList.contains("dark")));
+    thSwitch.addEventListener("click", () => { document.documentElement.classList.toggle("dark"); if (!bgManual) bg = neutral(); applyBg(); syncTheme(); });
+    thRow.append(thLabel, thSwitch);
+
+    section.append(bgRow, thRow);
+    syncTheme(); applyBg();
+    return section;
   }
 
   // ------------------------------------------------------------- standalone shell
@@ -938,8 +988,6 @@
     const mount = document.createElement("div"); mount.className = "kz-mount";
     stage.append(fill, mount);
 
-    addPreviewBg(stage, fill, tool.preview && tool.preview.background);
-
     const preview = createPreview(mount, tool, store, "standalone");
     const ex = exporter(tool, preview);
 
@@ -965,12 +1013,13 @@
     }
 
     const copyRow = document.createElement("div"); copyRow.className = "kz-btnrow"; copyRow.style.marginTop = "8px";
-    if (formats.includes("svg")) { const c = document.createElement("button"); c.className = "kz-mini"; c.textContent = "Copy SVG"; c.addEventListener("click", () => ex.copySVG()); copyRow.appendChild(c); }
-    if (formats.includes("png")) { const c = document.createElement("button"); c.className = "kz-mini"; c.textContent = "Copy PNG"; c.addEventListener("click", () => ex.copyPNG(+scaleSel.value)); copyRow.appendChild(c); }
-    const cj = document.createElement("button"); cj.className = "kz-mini"; cj.textContent = "Copy state"; cj.addEventListener("click", () => navigator.clipboard.writeText(store.serialise())); copyRow.appendChild(cj);
+    if (formats.includes("svg")) { const c = document.createElement("button"); c.className = "kz-mini"; c.textContent = "Copy SVG"; c.addEventListener("click", () => { ex.copySVG(); flashCopied(c); }); copyRow.appendChild(c); }
+    if (formats.includes("png")) { const c = document.createElement("button"); c.className = "kz-mini"; c.textContent = "Copy PNG"; c.addEventListener("click", () => { ex.copyPNG(+scaleSel.value); flashCopied(c); }); copyRow.appendChild(c); }
+    const cj = document.createElement("button"); cj.className = "kz-mini"; cj.textContent = "Copy state"; cj.addEventListener("click", () => { navigator.clipboard.writeText(store.serialise()); flashCopied(cj); }); copyRow.appendChild(cj);
     const lj = document.createElement("button"); lj.className = "kz-mini"; lj.textContent = "Load state"; lj.addEventListener("click", () => { const j = prompt("Paste state JSON"); if (j) store.deserialise(j); }); copyRow.appendChild(lj);
     exportSection.appendChild(copyRow);
     panel.appendChild(exportSection);
+    panel.appendChild(buildFrameSection(stage, fill, tool));
 
     app.append(panel, stage);
     document.body.appendChild(app);
@@ -1049,6 +1098,6 @@
   // and uses these to build the controls panel + state store around tool iframes.
   window.Kazam = {
     defineTool, version: PROTOCOL,
-    host: { createStore, resolveDefaults, buildPanel, resolveTokens, download },
+    host: { createStore, resolveDefaults, buildPanel, resolveTokens, download, flashCopied },
   };
 })();
