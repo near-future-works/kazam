@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Shape Generator</title>
+<script src="../frame/kazam.js"></script>
+</head>
+<body>
+<script>
+const SVG_NS = "http://www.w3.org/2000/svg";
+
+// 8x8 Bayer matrix — classic even ordered-dither field.
+const BAYER8 = [
+  [ 0,48,12,60, 3,51,15,63],[32,16,44,28,35,19,47,31],
+  [ 8,56, 4,52,11,59, 7,55],[40,24,36,20,43,27,39,23],
+  [ 2,50,14,62, 1,49,13,61],[34,18,46,30,33,17,45,29],
+  [10,58, 6,54, 9,57, 5,53],[42,26,38,22,41,25,37,21],
+];
+const round = (n, d) => { const f = Math.pow(10, d); return Math.round(n * f) / f; };
+
+// Gradient weight at a normalized position (nx,ny in [-1,1], nr = radius 0..1).
+// 1 at the dense end, 0 at the faded end.
+function fadeWeight(dir, nx, ny, nr) {
+  switch (dir) {
+    case 'top':    return (ny + 1) / 2;
+    case 'bottom': return (1 - ny) / 2;
+    case 'left':   return (nx + 1) / 2;
+    case 'right':  return (1 - nx) / 2;
+    case 'edges':  return Math.max(0, 1 - nr);
+    case 'center': return Math.min(1, nr);
+    default:       return 1;
+  }
+}
+
+// ---- shape geometry ----
+function regular(n) {
+  const pts = [];
+  for (let i = 0; i < n; i++) { const a = -Math.PI / 2 + i * 2 * Math.PI / n; pts.push([Math.cos(a), Math.sin(a)]); }
+  return pts;
+}
+function starPts(n, inner) {
+  const pts = [];
+  for (let i = 0; i < 2 * n; i++) { const a = -Math.PI / 2 + i * Math.PI / n; const rr = i % 2 ? inner : 1; pts.push([Math.cos(a) * rr, Math.sin(a) * rr]); }
+  return pts;
+}
+function shapePoints(shape) {
+  switch (shape) {
+    case 'triangle': return [[0, -1], [1, 1], [-1, 1]];
+    case 'square':
+    case 'rectangle': return [[-1, -1], [1, -1], [1, 1], [-1, 1]];
+    case 'diamond': return [[0, -1], [1, 0], [0, 1], [-1, 0]];
+    case 'pentagon': return regular(5);
+    case 'hexagon': return regular(6);
+    case 'star': return starPts(5, 0.42);
+    default: return null; // circle → ellipse
+  }
+}
+function shapeNode(ctx, shape, cx, cy, rx, ry, pts) {
+  if (!pts) return ctx.svg('ellipse', { cx: round(cx, 2), cy: round(cy, 2), rx: round(rx, 2), ry: round(ry, 2) });
+  return ctx.svg('polygon', { points: pts.map(p => `${round(cx + p[0] * rx, 2)},${round(cy + p[1] * ry, 2)}`).join(' ') });
+}
+function inShape(pts, nx, ny) {
+  if (!pts) return nx * nx + ny * ny <= 1;
+  let inside = false;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    const xi = pts[i][0], yi = pts[i][1], xj = pts[j][0], yj = pts[j][1];
+    if (((yi > ny) !== (yj > ny)) && (nx < (xj - xi) * (ny - yi) / (yj - yi) + xi)) inside = !inside;
+  }
+  return inside;
+}
+
+Kazam.defineTool({
+  id: 'dither-shape',
+  name: 'Shape Generator',
+  version: 1,
+  render: 'svg',
+  tagline: 'Ordered or organic dither inside a shape. Export crisp SVG or PNG.',
+  groups: ['Geometry', 'Dither', 'Colour', 'Stroke'],
+  preview: { background: '#ebf1e5' },   // runtime stage backdrop (the old "Canvas")
+  exportFormats: ['svg', 'png'],
+
+  settings: {
+    shape:   { type: 'select', label: 'Shape', group: 'Geometry', default: 'circle',
+               options: [
+                 { value: 'circle', label: 'Circle' }, { value: 'square', label: 'Square' },
+                 { value: 'rectangle', label: 'Rectangle' }, { value: 'triangle', label: 'Triangle' },
+                 { value: 'diamond', label: 'Diamond' }, { value: 'pentagon', label: 'Pentagon' },
+                 { value: 'hexagon', label: 'Hexagon' }, { value: 'star', label: 'Star' },
+               ] },
+    width:   { type: 'number', label: 'Width',  group: 'Geometry', col: 'half', default: 400, min: 40, max: 2000, step: 10, unit: 'px' },
+    height:  { type: 'number', label: 'Height', group: 'Geometry', col: 'half', default: 400, min: 40, max: 2000, step: 10, unit: 'px' },
+
+    pattern: { type: 'select', label: 'Pattern', group: 'Dither', col: 'half', default: 'noise',
+               options: [{ value: 'ordered', label: 'Ordered' }, { value: 'noise', label: 'Noise' }, { value: 'halftone', label: 'Halftone' }] },
+    jitter:  { type: 'slider', label: 'Jitter', group: 'Dither', col: 'half', default: 0.5, min: 0, max: 1, step: 0.01, format: 'percent' },
+    density: { type: 'slider', label: 'Density', group: 'Dither', col: 'half', default: 1, min: 0, max: 1, step: 0.01, format: 'percent' },
+    dotSize: { type: 'slider', label: 'Dot size', group: 'Dither', col: 'half', default: 0.5, min: 0.05, max: 1, step: 0.01, format: 'percent' },
+    spacing: { type: 'slider', label: 'Spacing', group: 'Dither', col: 'half', default: 4, min: 4, max: 48, step: 1, unit: 'px' },
+    fade:    { type: 'select', label: 'Fade', group: 'Dither', col: 'half', default: 'center',
+               options: [
+                 { value: 'none', label: 'None' }, { value: 'top', label: 'Top' }, { value: 'bottom', label: 'Bottom' },
+                 { value: 'left', label: 'Left' }, { value: 'right', label: 'Right' },
+                 { value: 'edges', label: 'Edges (radial)' }, { value: 'center', label: 'Center (radial)' },
+               ] },
+    fadeAmt: { type: 'slider', label: 'Amount', group: 'Dither', col: 'half', default: 1, min: 0, max: 1, step: 0.01, format: 'percent' },
+    fadeCurve:{ type: 'slider', label: 'Curve', group: 'Dither', col: 'half', default: 6, min: 0.2, max: 6, step: 0.1, unit: '×' },
+
+    fg:      { type: 'color', label: 'Foreground', group: 'Colour', default: { hex: '#1f2e1c', opacity: 1 } },
+    bg:      { type: 'color', label: 'Background', group: 'Colour', optional: true, default: null },
+
+    strokeOn:    { type: 'toggle', label: 'Stroke', group: 'Stroke', default: true },
+    strokeAlign: { type: 'select', label: 'Align', group: 'Stroke', col: 'half', default: 'outside',
+                   options: [{ value: 'center', label: 'Center' }, { value: 'inside', label: 'Inside' }, { value: 'outside', label: 'Outside' }] },
+    strokeWidth: { type: 'number', label: 'Width', group: 'Stroke', col: 'half', default: 2, min: 0, max: 40, step: 0.5, unit: 'px' },
+  },
+
+  build(S, ctx) {
+    const pts = shapePoints(S.shape);
+    const fgHex = (S.fg && S.fg.hex) ? S.fg.hex : null;
+    const fgOp  = S.fg ? (S.fg.opacity != null ? S.fg.opacity : 1) : 1;
+    const bgHex = (S.bg && S.bg.hex) ? S.bg.hex : null;
+    const bgOp  = S.bg ? (S.bg.opacity != null ? S.bg.opacity : 1) : 1;
+
+    const sw = S.strokeOn ? S.strokeWidth : 0;
+    const overshoot = S.strokeAlign === 'outside' ? sw : S.strokeAlign === 'center' ? sw / 2 : 0;
+    const pad = Math.ceil(overshoot) + 2;
+    const rx = S.width / 2, ry = S.height / 2;
+    const svgW = S.width + pad * 2, svgH = S.height + pad * 2;
+    const cx = svgW / 2, cy = svgH / 2;
+
+    const svg = ctx.svg('svg', { xmlns: SVG_NS, width: svgW, height: svgH, viewBox: `0 0 ${svgW} ${svgH}` });
+
+    const defs = ctx.svg('defs');
+    const clipId = ctx.uid('clip'), maskId = ctx.uid('mask');
+    const clip = ctx.svg('clipPath', { id: clipId });
+    clip.append(shapeNode(ctx, S.shape, cx, cy, rx, ry, pts));
+    defs.append(clip);
+    if (S.strokeOn && sw > 0 && S.strokeAlign === 'outside') {
+      const mask = ctx.svg('mask', { id: maskId });
+      mask.append(ctx.svg('rect', { x: 0, y: 0, width: svgW, height: svgH, fill: '#fff' }));
+      const bsh = shapeNode(ctx, S.shape, cx, cy, rx, ry, pts); bsh.setAttribute('fill', '#000');
+      mask.append(bsh);
+      defs.append(mask);
+    }
+    svg.append(defs);
+
+    if (bgHex) {
+      const bgN = shapeNode(ctx, S.shape, cx, cy, rx, ry, pts);
+      bgN.setAttribute('fill', bgHex);
+      if (bgOp < 1) bgN.setAttribute('fill-opacity', round(bgOp, 3));
+      svg.append(bgN);
+    }
+
+    const dots = ctx.svg('g', { 'clip-path': `url(#${clipId})`, fill: fgHex || 'none' });
+    if (fgOp < 1) dots.setAttribute('fill-opacity', round(fgOp, 3));
+
+    const sp = S.spacing;
+    const dotR = (sp / 2) * S.dotSize;
+    const jitterPx = sp * 0.6 * S.jitter;
+    const halftoneMax = sp * 0.5 * (0.55 + S.dotSize);
+    const lattices = S.pattern === 'halftone'
+      ? [{ ox: 0, oy: 0, lo: 0, hi: 1, saltT: 1, saltJ: 10 }]
+      : [{ ox: 0, oy: 0, lo: 0, hi: 1, saltT: 1, saltJ: 10 }, { ox: sp / 2, oy: sp / 2, lo: 0.5, hi: 1, saltT: 4, saltJ: 20 }];
+
+    if (S.density > 0 && dotR > 0 && fgHex) {
+      for (const lat of lattices) {
+        const startX = cx + lat.ox - Math.ceil((rx + sp) / sp) * sp;
+        const startY = cy + lat.oy - Math.ceil((ry + sp) / sp) * sp;
+        let gy = 0;
+        for (let y = startY; y <= cy + ry + sp; y += sp, gy++) {
+          let gx = 0;
+          for (let x = startX; x <= cx + rx + sp; x += sp, gx++) {
+            const nx = (x - cx) / rx, ny = (y - cy) / ry, nr = Math.hypot(nx, ny);
+            const w = Math.pow(Math.max(0, Math.min(1, fadeWeight(S.fade, nx, ny, nr))), S.fadeCurve);
+            const localD = S.density * ((1 - S.fadeAmt) + S.fadeAmt * w);
+            if (localD <= 0) continue;
+
+            let radius;
+            if (S.pattern === 'halftone') {
+              radius = halftoneMax * Math.sqrt(Math.min(1, localD));
+              if (radius < 0.15) continue;
+            } else {
+              const base = S.pattern === 'noise'
+                ? ctx.random.hash(gx, gy, lat.saltT)
+                : (BAYER8[gy & 7][gx & 7] + 0.5) / 64;
+              const threshold = lat.lo + (lat.hi - lat.lo) * base;
+              if (localD <= threshold) continue;
+              radius = dotR;
+            }
+
+            let px = x, py = y;
+            if (jitterPx) {
+              px += (ctx.random.hash(gx, gy, lat.saltJ + 1) - 0.5) * jitterPx;
+              py += (ctx.random.hash(gx, gy, lat.saltJ + 2) - 0.5) * jitterPx;
+            }
+            if (!inShape(pts, (px - cx) / rx, (py - cy) / ry)) continue;
+
+            dots.append(ctx.svg('circle', { cx: round(px, 2), cy: round(py, 2), r: round(radius, 2) }));
+          }
+        }
+      }
+    }
+    svg.append(dots);
+
+    if (S.strokeOn && sw > 0 && fgHex) {
+      const ring = shapeNode(ctx, S.shape, cx, cy, rx, ry, pts);
+      ring.setAttribute('fill', 'none');
+      ring.setAttribute('stroke', fgHex);
+      if (fgOp < 1) ring.setAttribute('stroke-opacity', round(fgOp, 3));
+      ring.setAttribute('stroke-linejoin', 'round');
+      if (S.strokeAlign === 'center') {
+        ring.setAttribute('stroke-width', sw);
+      } else {
+        ring.setAttribute('stroke-width', sw * 2);
+        ring.setAttribute(S.strokeAlign === 'inside' ? 'clip-path' : 'mask',
+                          `url(#${S.strokeAlign === 'inside' ? clipId : maskId})`);
+      }
+      svg.append(ring);
+    }
+    return svg;
+  },
+});
+</script>
+</body>
+</html>

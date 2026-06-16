@@ -174,7 +174,14 @@
   }
   .kz-fill { position: absolute; inset: 0; z-index: 0; pointer-events: none; }
   .kz-mount { position: relative; z-index: 1; line-height: 0; }
-  .kz-mount svg, .kz-mount canvas { display: block; max-width: 100%; }`;
+  .kz-mount svg, .kz-mount canvas { display: block; max-width: 100%; }
+
+  /* preview backdrop control (the artwork's stage colour; not exported) */
+  .kz-pbg { position: absolute; top: 10px; left: 10px; z-index: 2; display: flex; align-items: center; gap: 4px;
+    background: hsl(var(--card) / .72); border: 1px solid hsl(var(--border)); border-radius: calc(var(--radius) - 2px); padding: 4px; }
+  .kz-pbg-sw { width: 20px; height: 20px; flex: none; padding: 0; cursor: pointer; border: 1px solid hsl(var(--input)); border-radius: 4px; background-clip: padding-box; }
+  .kz-pbg-clear { width: 18px; height: 20px; border: none; background: none; color: hsl(var(--muted-foreground)); cursor: pointer; font-size: 14px; }
+  .kz-pbg-clear:hover { color: hsl(var(--foreground)); }`;
 
   let stylesInjected = false;
   function injectStyles() {
@@ -599,6 +606,22 @@
     };
   }
 
+  // preview backdrop (the stage colour behind the artwork; preview-only, not exported)
+  function addPreviewBg(stage, fill, def) {
+    let value = def && !isTransparent(def) ? (normHex(def) || def) : null;
+    const wrap = document.createElement("div"); wrap.className = "kz-pbg";
+    const sw = document.createElement("button"); sw.type = "button"; sw.className = "kz-pbg-sw"; sw.title = "Preview background";
+    const picker = document.createElement("input"); picker.type = "color"; picker.className = "kz-picker"; picker.value = value || "#ebf1e5";
+    const clear = document.createElement("button"); clear.type = "button"; clear.className = "kz-pbg-clear"; clear.textContent = "×"; clear.title = "Transparent";
+    wrap.append(sw, picker, clear);
+    const apply = () => { sw.style.background = value || CHECKER; fill.style.background = value || "transparent"; };
+    sw.addEventListener("click", () => picker.click());
+    picker.addEventListener("input", () => { value = picker.value; apply(); });
+    clear.addEventListener("click", () => { value = null; apply(); });
+    apply();
+    stage.appendChild(wrap);
+  }
+
   // ------------------------------------------------------------- standalone shell
   function bootStandalone(tool) {
     injectStyles();
@@ -626,6 +649,8 @@
     const fill = document.createElement("div"); fill.className = "kz-fill";
     const mount = document.createElement("div"); mount.className = "kz-mount";
     stage.append(fill, mount);
+
+    addPreviewBg(stage, fill, tool.preview && tool.preview.background);
 
     const preview = createPreview(mount, tool, store, "standalone");
     const ex = exporter(tool, preview);
