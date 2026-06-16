@@ -818,7 +818,7 @@
    * @param {ToolDef} tool
    * @param {State} state
    * @param {'standalone'|'framed'} mode
-   * @param {{ animated?: boolean, frameIndex?: number, t?: number, live?: boolean }} [opts]
+   * @param {{ animated?: boolean, frameIndex?: number, t?: number, live?: boolean, duration?: number }} [opts]
    * @returns {Ctx}
    */
   function makeCtx(tool, state, mode, opts) {
@@ -1026,12 +1026,13 @@
       const k = indices[i], key = prev * 256 + k, got = dict.get(key);
       if (got !== undefined) { prev = got; continue; }
       put(prev, codeSize);
-      // Grow the code size BEFORE assigning the new code (and reset the table when
-      // full) — matching the order a standard GIF decoder uses. Bumping after the
-      // assignment, as before, desynced the bit width one code early at each 2^n
-      // boundary, so decoders garbled everything past the first ~512 codes.
+      // GIF "early change": assign the new code, THEN grow the width once the next
+      // free index reaches 2^codeSize. The width must change one code AFTER the
+      // boundary index is assigned (so the boundary code is still emitted narrow),
+      // which is what the decoder — running one entry behind — expects. Resetting
+      // the table when full (4096) emits a clear and starts the dictionary over.
       if (next === 4096) { put(clearCode, codeSize); dict = new Map(); next = eoiCode + 1; codeSize = minCode + 1; }
-      else { if (next >= (1 << codeSize) && codeSize < 12) codeSize++; dict.set(key, next++); }
+      else { dict.set(key, next++); if (next >= (1 << codeSize) && codeSize < 12) codeSize++; }
       prev = k;
     }
     put(prev, codeSize); put(eoiCode, codeSize);
@@ -1128,7 +1129,7 @@
     });
     scrub.addEventListener("input", () => { player.seek(+scrub.value); btn.innerHTML = PLAY_SVG; });
     player.onFrame((idx, total, t) => {
-      if (+scrub.max !== total - 1) scrub.max = total - 1;   // frame count can change with state (dynamic timelines)
+      if (+scrub.max !== total - 1) scrub.max = String(total - 1);   // frame count can change with state (dynamic timelines)
       if (document.activeElement !== scrub) scrub.value = idx;
       time.textContent = t.toFixed(2) + " / " + durOf(total).toFixed(2) + "s";
     });
