@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    "noEmit": true,
+    "allowJs": true,
+    "checkJs": false,
+    "strict": true,
+    "noImplicitAny": false,
+    "target": "ES2020",
+    "module": "CommonJS",
+    "moduleResolution": "Node",
+    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+    "skipLibCheck": true,
+    "types": []
+  },
+  "//include": "Only the runtime + its contract are type-checked (opt-in via `// @ts-check`). Tests are validated by running them (`npm test`); checking them would pull in @types/node and clash with the runtime's DOM lib.",
+  "include": ["frame/**/*.js", "frame/**/*.d.ts"]
+}

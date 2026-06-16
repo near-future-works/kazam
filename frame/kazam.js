@@ -1,5 +1,7 @@
-/*
- * Kazam runtime. See ../CLAUDE.md for the contract.
+// @ts-check
+/**
+ * Kazam runtime. See ../CLAUDE.md for the contract (and frame/contract.d.ts for
+ * its machine-checkable form — this file is checked against it via `tsc`).
  *
  * One file, included by every tool via <script src="../frame/kazam.js">. It:
  *   - exposes Kazam.defineTool(def)
@@ -10,6 +12,16 @@
  *   - owns the state store (serialise/deserialise), seeded RNG, and SVG/PNG export
  *
  * Tools own only their settings declaration and build()/frame() function.
+ *
+ * @typedef {import('./contract').ToolDef} ToolDef
+ * @typedef {import('./contract').Field} Field
+ * @typedef {import('./contract').Settings} Settings
+ * @typedef {import('./contract').State} State
+ * @typedef {import('./contract').StateValue} StateValue
+ * @typedef {import('./contract').ColorValue} ColorValue
+ * @typedef {import('./contract').Store} Store
+ * @typedef {import('./contract').Ctx} Ctx
+ * @typedef {import('./contract').ExportPayload} ExportPayload
  */
 (function () {
   "use strict";
@@ -312,7 +324,12 @@
   const fieldUnit = field => field.unit || (field.format === "percent" ? "%" : "");
 
   // ------------------------------------------------------------- state store
+  /**
+   * @param {Settings} settings
+   * @returns {State}
+   */
   function resolveDefaults(settings) {
+    /** @type {State} */
     const state = {};
     for (const key in settings) {
       const f = settings[key];
@@ -320,8 +337,13 @@
     }
     return state;
   }
+  /** @template T @param {T} v @returns {T} */
   const clone = v => (v && typeof v === "object" ? JSON.parse(JSON.stringify(v)) : v);
 
+  /**
+   * @param {State} defaults
+   * @returns {Store}
+   */
   function createStore(defaults) {
     let state = clone(defaults);
     const subs = new Set();
@@ -406,14 +428,14 @@
           v = Math.max(field.min, Math.min(field.max, v));
           v = dec ? +v.toFixed(dec) : v;
           store.set(key, v);
-          input.value = toDisplay(field, v);
+          input.value = String(toDisplay(field, v));
         },
         fillFrac);
     }
     const refresh = () => {
       const v = store.get()[key];
       const auto = field.auto && (v == null);
-      if (document.activeElement !== input) input.value = toDisplay(field, auto ? autoVal(store.get()) : v);
+      if (document.activeElement !== input) input.value = String(toDisplay(field, auto ? autoVal(store.get()) : v));
       input.classList.toggle("kz-autoval", !!auto);
       if (isSlider) fieldEl.style.setProperty("--fill", Math.max(0, Math.min(1, fillFrac())) * 100 + "%");
     };
@@ -494,7 +516,7 @@
     const hex = document.createElement("input"); hex.type = "text"; hex.className = "kz-hex"; hex.placeholder = "None";
     const divline = document.createElement("span"); divline.className = "kz-divline";
     const opwrap = document.createElement("span"); opwrap.className = "kz-opwrap";
-    const opac = document.createElement("input"); opac.type = "number"; opac.className = "kz-num kz-opac"; opac.min = 0; opac.max = 100;
+    const opac = document.createElement("input"); opac.type = "number"; opac.className = "kz-num kz-opac"; opac.min = "0"; opac.max = "100";
     const opsfx = document.createElement("span"); opsfx.className = "kz-sfx"; opsfx.textContent = "%";
     const picker = document.createElement("input"); picker.type = "color"; picker.className = "kz-picker"; picker.value = "#ffffff";
     opwrap.appendChild(opac); opwrap.appendChild(opsfx);
@@ -519,7 +541,7 @@
     opac.addEventListener("input", () => { if (opac.value !== "") setColor({ opacity: Math.max(0, Math.min(1, +opac.value / 100)) }); });
     attachScrub(opac, opwrap, opwrap,
       () => (get() ? (get().opacity ?? 1) : 1),
-      (startV, dx) => { let v = Math.max(0, Math.min(1, startV + dx / 260)); v = Math.round(v * 100) / 100; setColor({ opacity: v }); opac.value = Math.round(v * 100); },
+      (startV, dx) => { let v = Math.max(0, Math.min(1, startV + dx / 260)); v = Math.round(v * 100) / 100; setColor({ opacity: v }); opac.value = String(Math.round(v * 100)); },
       () => (get() ? (get().opacity ?? 1) : 1));
     addBtn.addEventListener("click", () => store.set(key, { hex: picker.value || "#ffffff", opacity: 1 }));
 
@@ -535,7 +557,7 @@
       swatch.style.background = transparent ? CHECKER : (normHex(c.hex) || c.hex);
       if (document.activeElement !== hex) hex.value = transparent ? "" : (c.hex || "");
       const op = c ? (c.opacity ?? 1) : 1;
-      if (document.activeElement !== opac) opac.value = Math.round(op * 100);
+      if (document.activeElement !== opac) opac.value = String(Math.round(op * 100));
       opwrap.style.setProperty("--fill", Math.round(op * 100) + "%");
       if (field.optional) {
         const has = c !== null && c !== undefined;
@@ -570,9 +592,10 @@
     addBtn.addEventListener("click", pick); replace.addEventListener("click", pick);
     remove.addEventListener("click", () => store.set(key, null));
     input.addEventListener("change", e => {
-      const f = e.target.files[0]; e.target.value = ""; if (!f) return;
+      const inp = /** @type {HTMLInputElement} */ (e.target);
+      const f = inp.files && inp.files[0]; inp.value = ""; if (!f) return;
       const rd = new FileReader();
-      rd.onload = () => { const src = rd.result; const im = new Image(); im.onload = () => store.set(key, { src, width: im.naturalWidth, height: im.naturalHeight, name: f.name }); im.src = src; };
+      rd.onload = () => { const src = /** @type {string} */ (rd.result); const im = new Image(); im.onload = () => store.set(key, { src, width: im.naturalWidth, height: im.naturalHeight, name: f.name }); im.src = src; };
       rd.readAsDataURL(f);
     });
     const refresh = () => {
@@ -614,7 +637,7 @@
     const refresh = () => {
       const arr = getArr(), chips = row.querySelectorAll(".kz-swchip");
       if (chips.length !== arr.length) { build(); return; }   // structure changed → rebuild
-      arr.forEach((hex, i) => { chips[i].style.background = normHex(hex) || hex; const inp = chips[i].querySelector("input"); if (document.activeElement !== inp) inp.value = normHex(hex) || "#888888"; });
+      arr.forEach((hex, i) => { const chip = /** @type {HTMLElement} */ (chips[i]); chip.style.background = normHex(hex) || hex; const inp = chip.querySelector("input"); if (inp && document.activeElement !== inp) inp.value = normHex(hex) || "#888888"; });
     };
     build();
     return { node: wrap, refresh };
@@ -707,21 +730,29 @@
     const w = +el.getAttribute("width"), h = +el.getAttribute("height");
     return { width: w || 0, height: h || 0 };
   }
+  /**
+   * @param {ToolDef} tool
+   * @param {State} state
+   * @param {'standalone'|'framed'} mode
+   * @param {{ animated?: boolean, frameIndex?: number, t?: number, live?: boolean }} [opts]
+   * @returns {Ctx}
+   */
   function makeCtx(tool, state, mode, opts) {
     opts = opts || {};
-    const baseSeed = (state.seed != null ? state.seed : (tool.seed != null ? tool.seed : 1)) >>> 0;
+    const baseSeed = (state.seed != null ? Number(state.seed) : (tool.seed != null ? tool.seed : 1)) >>> 0;
     // animated frames get a per-frame stream seed (so ctx.random() noise varies
     // per frame); ctx.random.hash stays keyed to the base seed (stable per entity).
-    const streamSeed = opts.animated ? ((baseSeed ^ Math.imul((opts.frameIndex | 0) + 1, 0x9e3779b9)) >>> 0) : baseSeed;
+    const streamSeed = opts.animated ? ((baseSeed ^ Math.imul((opts.frameIndex || 0) + 1, 0x9e3779b9)) >>> 0) : baseSeed;
     let uid = 0;
     return {
+      width: 0, height: 0,   // filled in by renderAt once the output size is known
       tokens: resolveTokens(),
       random: makeRandom(streamSeed, baseSeed),
       seed: baseSeed, mode,
       t: opts.t || 0, frame: opts.frameIndex || 0, duration: opts.duration != null ? opts.duration : (tool.duration || 0), fps: tool.fps || 30,
       live: !!opts.live,   // true only during continuous rAF playback (not export / scrub) — gate audio on this
       uid: (name) => `${tool.id}-${name || "id"}-${uid++}`,
-      svg: (tag, attrs) => { const el = document.createElementNS(SVG_NS, tag); if (attrs) for (const k in attrs) el.setAttribute(k, attrs[k]); return el; },
+      svg: (tag, attrs) => { const el = document.createElementNS(SVG_NS, tag); if (attrs) for (const k in attrs) el.setAttribute(k, String(attrs[k])); return el; },
       colorToCss,
     };
   }
@@ -837,7 +868,7 @@
       const w = (+el.getAttribute("width") || el.viewBox.baseVal.width) * scale;
       const h = (+el.getAttribute("height") || el.viewBox.baseVal.height) * scale;
       const canvas = document.createElement("canvas"); canvas.width = w; canvas.height = h;
-      canvas.getContext("2d").drawImage(img, 0, 0, w, h);
+      const c2 = canvas.getContext("2d"); if (c2) c2.drawImage(img, 0, 0, w, h);
       canvas.toBlob(b => { cb(b); URL.revokeObjectURL(url); }, "image/png");
     };
     img.src = url;
@@ -869,7 +900,7 @@
     let i = 0;
     (function step() {
       preview.renderAt(i % total);
-      if (manual) track.requestFrame();
+      if (manual && track.requestFrame) track.requestFrame();
       i++;
       if (i <= total) setTimeout(step, 1000 / fps);
       else setTimeout(() => rec.stop(), 1000 / fps);
@@ -936,6 +967,7 @@
     setTimeout(() => {
       const off = document.createElement("canvas"); off.width = W; off.height = H;
       const octx = off.getContext("2d");
+      if (!octx) return cb(null);
       const frames = [];
       for (let i = 0; i < total; i += stride) {
         preview.renderAt(i);
@@ -997,7 +1029,7 @@
     const bar = document.createElement("div"); bar.className = "kz-transport";
     const btn = document.createElement("button"); btn.className = "kz-tbtn"; btn.innerHTML = PLAY_SVG; btn.title = "Play / pause";
     const scrub = document.createElement("input"); scrub.type = "range"; scrub.className = "kz-tscrub";
-    scrub.min = 0; scrub.max = player.totalFrames - 1; scrub.step = 1; scrub.value = 0;
+    scrub.min = "0"; scrub.max = String(player.totalFrames - 1); scrub.step = "1"; scrub.value = "0";
     const time = document.createElement("span"); time.className = "kz-ttime";
     const durOf = total => (total - 1) / player.fps;
     time.textContent = "0.00 / " + durOf(player.totalFrames).toFixed(2) + "s";
@@ -1044,7 +1076,7 @@
     const formats = tool.exportFormats || ["svg", "png"];
     const row = document.createElement("div"); row.className = "kz-btnrow";
     const scaleSel = document.createElement("select"); scaleSel.className = "kz-select kz-scale";
-    [1, 2, 4].forEach(s => { const o = document.createElement("option"); o.value = s; o.textContent = s + "×"; if (s === 2) o.selected = true; scaleSel.appendChild(o); });
+    [1, 2, 4].forEach(s => { const o = document.createElement("option"); o.value = String(s); o.textContent = s + "×"; if (s === 2) o.selected = true; scaleSel.appendChild(o); });
 
     const stage = document.createElement("main"); stage.className = "kz-stage";
     const fill = document.createElement("div"); fill.className = "kz-fill";
@@ -1147,7 +1179,23 @@
     });
   }
 
+  // Inline the runtime <script src="…kazam.js"> into a tool's source so it becomes
+  // a single self-contained file. Pure string work (no fetch) so the host can test
+  // it and reuse it; the host passes in the fetched runtime text.
+  const RUNTIME_SRC_RE = /src=["'][^"']*kazam\.js["']/i;
+  const RUNTIME_TAG_RE = /<script\b[^>]*\bsrc=["'][^"']*kazam\.js["'][^>]*>\s*<\/script>/i;
+  /**
+   * @param {string} raw  tool HTML source
+   * @param {string} runtimeText  the contents of kazam.js to inline
+   * @returns {string}  source with the runtime inlined (or unchanged if already self-contained)
+   */
+  function inlineRuntime(raw, runtimeText) {
+    if (!RUNTIME_SRC_RE.test(raw)) return raw;            // already self-contained
+    return raw.replace(RUNTIME_TAG_RE, "<script>\n" + runtimeText + "\n<\/script>");
+  }
+
   // ------------------------------------------------------------- entry
+  /** @param {ToolDef} tool */
   function defineTool(tool) {
     if (!tool || !tool.id || (typeof tool.build !== "function" && typeof tool.frame !== "function")) {
       throw new Error("Kazam.defineTool: requires { id, settings, and build() and/or frame() }");
@@ -1159,14 +1207,28 @@
     return tool;
   }
 
-  // Inject tokens + component CSS as soon as the runtime loads, so both tools
-  // and the frame host (which includes this file without calling defineTool) are styled.
-  injectStyles();
+  const host = { createStore, resolveDefaults, buildPanel, resolveTokens, download, flashCopied, renderExportToggles, neutralBg, inlineRuntime };
 
-  // Host-side helpers: the frame app (frame/index.html) includes this same file
-  // and uses these to build the controls panel + state store around tool iframes.
-  window.Kazam = {
-    defineTool, version: PROTOCOL,
-    host: { createStore, resolveDefaults, buildPanel, resolveTokens, download, flashCopied, renderExportToggles, neutralBg },
-  };
+  // Browser: inject tokens + component CSS as soon as the runtime loads (so both
+  // tools and the frame host — which includes this file without calling defineTool —
+  // are styled), then expose the global. Guarded so the file is require()-able in
+  // Node for tests without touching the DOM.
+  if (typeof document !== "undefined") injectStyles();
+  if (typeof window !== "undefined") {
+    window.Kazam = { defineTool, version: PROTOCOL, host };
+  }
+
+  // Node (tests only): expose the pure, DOM-free helpers. The guard short-circuits
+  // in the browser (where `module` is undefined), so the shipped path is untouched.
+  if (typeof module !== "undefined" && module.exports) {
+    module.exports = {
+      version: PROTOCOL,
+      mulberry32, makeRandom,
+      isTransparent, normHex, colorToCss,
+      fieldDecimals, toDisplay, fromDisplay, fieldUnit,
+      resolveDefaults, clone, createStore,
+      medianCut, lzwEncode,
+      inlineRuntime,
+    };
+  }
 })();
