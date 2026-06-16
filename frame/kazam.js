@@ -189,7 +189,17 @@
     background: hsl(var(--card) / .25); border: 1px solid hsl(var(--border) / .5); border-radius: calc(var(--radius) - 2px); padding: 4px; }
   .kz-pbg-sw { width: 20px; height: 20px; flex: none; padding: 0; cursor: pointer; border: 1px solid hsl(var(--input)); border-radius: 4px; background-clip: padding-box; }
   .kz-pbg-clear { width: 18px; height: 20px; border: none; background: none; color: hsl(var(--muted-foreground)); cursor: pointer; font-size: 14px; }
-  .kz-pbg-clear:hover { color: hsl(var(--foreground)); }`;
+  .kz-pbg-clear:hover { color: hsl(var(--foreground)); }
+
+  /* playback transport (animated tools only) */
+  .kz-transport { position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 3;
+    display: flex; align-items: center; gap: 10px; padding: 6px 12px 6px 8px; min-width: 280px; max-width: 70%;
+    background: hsl(var(--card) / .82); border: 1px solid hsl(var(--border)); border-radius: 999px; }
+  .kz-tbtn { width: 26px; height: 26px; flex: none; display: inline-flex; align-items: center; justify-content: center;
+    background: none; border: none; color: hsl(var(--foreground)); cursor: pointer; padding: 0; border-radius: 50%; }
+  .kz-tbtn:hover { background: hsl(var(--secondary)); }
+  .kz-tscrub { flex: 1; min-width: 120px; accent-color: hsl(var(--primary)); }
+  .kz-ttime { color: hsl(var(--muted-foreground)); font-size: 11px; font-variant-numeric: tabular-nums; min-width: 70px; text-align: right; }`;
 
   let stylesInjected = false;
   function injectStyles() {
@@ -223,15 +233,18 @@
       return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
     };
   }
-  function makeRandom(seed) {
-    seed = seed >>> 0;
-    const next = mulberry32(seed);
+  function makeRandom(streamSeed, hashSeed) {
+    streamSeed = streamSeed >>> 0;
+    hashSeed = (hashSeed == null ? streamSeed : hashSeed) >>> 0;
+    const next = mulberry32(streamSeed);
     const random = () => next();
     random.int = n => Math.floor(next() * n);
     random.range = (a, b) => a + next() * (b - a);
-    // order-independent spatial hash, keyed by integer coords/salts
+    // order-independent spatial hash, keyed by integer coords/salts. Uses the
+    // base (frame-independent) seed, so per-entity randomness stays stable while
+    // an animation plays — motion should come from `t`, not from a reseed.
     random.hash = function (...keys) {
-      let h = (seed ^ 0x9e3779b9) >>> 0;
+      let h = (hashSeed ^ 0x9e3779b9) >>> 0;
       for (let i = 0; i < keys.length; i++) {
         h = (Math.imul(h ^ (keys[i] | 0), 0x01000193) >>> 0);
         h ^= h >>> 13;
@@ -548,13 +561,18 @@
     const w = +el.getAttribute("width"), h = +el.getAttribute("height");
     return { width: w || 0, height: h || 0 };
   }
-  function makeCtx(tool, state, mode) {
-    const seed = (state.seed != null ? state.seed : (tool.seed != null ? tool.seed : 1)) >>> 0;
+  function makeCtx(tool, state, mode, opts) {
+    opts = opts || {};
+    const baseSeed = (state.seed != null ? state.seed : (tool.seed != null ? tool.seed : 1)) >>> 0;
+    // animated frames get a per-frame stream seed (so ctx.random() noise varies
+    // per frame); ctx.random.hash stays keyed to the base seed (stable per entity).
+    const streamSeed = opts.animated ? ((baseSeed ^ Math.imul((opts.frameIndex | 0) + 1, 0x9e3779b9)) >>> 0) : baseSeed;
     let uid = 0;
     return {
       tokens: resolveTokens(),
-      random: makeRandom(seed),
-      seed, mode,
+      random: makeRandom(streamSeed, baseSeed),
+      seed: baseSeed, mode,
+      t: opts.t || 0, frame: opts.frameIndex || 0, duration: tool.duration || 0, fps: tool.fps || 30,
       uid: (name) => `${tool.id}-${name || "id"}-${uid++}`,
       svg: (tag, attrs) => { const el = document.createElementNS(SVG_NS, tag); if (attrs) for (const k in attrs) el.setAttribute(k, attrs[k]); return el; },
       colorToCss,
@@ -562,28 +580,55 @@
   }
 
   function createPreview(mount, tool, store, mode) {
-    let current = null;
-    function render() {
+    const animated = (tool.duration || 0) > 0 && typeof tool.frame === "function";
+    const fps = tool.fps || 30;
+    const totalFrames = Math.max(1, Math.round((tool.duration || 0) * fps));
+    const sub = new Set();               // frame listeners (transport sync)
+    let current = null, canvas = null, ctx2d = null, cw = 0, ch = 0;
+    let pos = 0, playing = false, rafId = null, lastTs = 0;
+
+    function sizeOf(state, el) {
+      if (tool.size) return tool.size(state);
+      if (tool.render === "canvas") return { width: 600, height: 600 };
+      return el ? sizeFromSvg(el) : { width: 600, height: 600 };
+    }
+    // Render a specific frame index. Static tools (animated=false) ignore idx.
+    function renderAt(idx) {
       const state = store.get();
-      const ctx = makeCtx(tool, state, mode);
-      let el;
+      const t = animated ? idx / fps : 0;
+      const ctx = makeCtx(tool, state, mode, { frameIndex: idx, t, animated });
       if (tool.render === "canvas") {
-        const size = tool.size ? tool.size(state) : { width: 600, height: 600 };
-        ctx.width = size.width; ctx.height = size.height;
-        const canvas = document.createElement("canvas"); canvas.width = size.width; canvas.height = size.height;
-        ctx.canvas = canvas; ctx.ctx2d = canvas.getContext("2d");
-        tool.build(state, ctx);
-        el = canvas;
+        const s = sizeOf(state);
+        if (!canvas) { canvas = document.createElement("canvas"); ctx2d = canvas.getContext("2d"); }
+        if (cw !== s.width || ch !== s.height) { canvas.width = s.width; canvas.height = s.height; cw = s.width; ch = s.height; }
+        ctx.width = s.width; ctx.height = s.height; ctx.canvas = canvas; ctx.ctx2d = ctx2d;
+        if (animated) tool.frame(state, t, ctx); else if (tool.build) tool.build(state, ctx); else tool.frame(state, 0, ctx);
+        if (current !== canvas) { mount.replaceChildren(canvas); current = canvas; } // mount once; reuse across frames
       } else {
-        el = tool.build(state, ctx);
-        const s = tool.size ? tool.size(state) : sizeFromSvg(el);
-        ctx.width = s.width; ctx.height = s.height;
+        const el = animated ? tool.frame(state, t, ctx) : (tool.build ? tool.build(state, ctx) : tool.frame(state, 0, ctx));
+        const s = sizeOf(state, el); ctx.width = s.width; ctx.height = s.height;
+        mount.replaceChildren(el); current = el;
       }
-      mount.replaceChildren(el);
-      current = el;
+      sub.forEach(fn => fn(idx, totalFrames, t));
       return current;
     }
-    return { render, get current() { return current; }, makeCtxForExport: () => makeCtx(tool, store.get(), mode) };
+    function render() { return renderAt(animated ? Math.floor(pos) % totalFrames : 0); }
+    function tick(ts) {
+      if (!playing) return;
+      if (!lastTs) lastTs = ts;
+      pos = (pos + ((ts - lastTs) / 1000) * fps) % totalFrames; lastTs = ts;
+      renderAt(Math.floor(pos));
+      rafId = requestAnimationFrame(tick);
+    }
+    function play() { if (!animated || playing) return; playing = true; lastTs = 0; rafId = requestAnimationFrame(tick); }
+    function pause() { playing = false; if (rafId) cancelAnimationFrame(rafId); rafId = null; }
+    function seek(idx) { pause(); pos = idx; renderAt(idx); }
+
+    return {
+      render, renderAt, get current() { return current; },
+      animated, totalFrames, fps,
+      play, pause, seek, onFrame(fn) { sub.add(fn); }, get playing() { return playing; },
+    };
   }
 
   // ------------------------------------------------------------- export
@@ -622,6 +667,32 @@
       downloadPNG(scale) { scale = scale || 2; exportArtifact(tool, preview.current, "png", scale, a => a && download(a.blob, `${tool.id}@${scale}x.png`)); },
       copyPNG(scale) { exportArtifact(tool, preview.current, "png", scale || 2, a => a && navigator.clipboard.write([new ClipboardItem({ "image/png": a.blob })]).catch(() => {})); },
     };
+  }
+
+  // playback transport for animated tools (lives in the stage, drives the player)
+  const PLAY_SVG = '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
+  const PAUSE_SVG = '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M6 5h4v14H6zM14 5h4v14h-4z"/></svg>';
+  function addTransport(stage, player) {
+    if (!player.animated) return null;
+    const bar = document.createElement("div"); bar.className = "kz-transport";
+    const btn = document.createElement("button"); btn.className = "kz-tbtn"; btn.innerHTML = PLAY_SVG; btn.title = "Play / pause";
+    const scrub = document.createElement("input"); scrub.type = "range"; scrub.className = "kz-tscrub";
+    scrub.min = 0; scrub.max = player.totalFrames - 1; scrub.step = 1; scrub.value = 0;
+    const time = document.createElement("span"); time.className = "kz-ttime";
+    const dur = (player.totalFrames - 1) / player.fps;
+    time.textContent = "0.00 / " + dur.toFixed(2) + "s";
+    bar.append(btn, scrub, time);
+    btn.addEventListener("click", () => {
+      if (player.playing) { player.pause(); btn.innerHTML = PLAY_SVG; }
+      else { player.play(); btn.innerHTML = PAUSE_SVG; }
+    });
+    scrub.addEventListener("input", () => { player.seek(+scrub.value); btn.innerHTML = PLAY_SVG; });
+    player.onFrame((idx, total, t) => {
+      if (document.activeElement !== scrub) scrub.value = idx;
+      time.textContent = t.toFixed(2) + " / " + dur.toFixed(2) + "s";
+    });
+    stage.appendChild(bar);
+    return { autoplay() { player.play(); btn.innerHTML = PAUSE_SVG; } };
   }
 
   // preview backdrop (the stage colour behind the artwork; preview-only, not exported)
@@ -697,8 +768,10 @@
     app.append(panel, stage);
     document.body.appendChild(app);
 
+    const transport = addTransport(stage, preview);
     store.subscribe(() => preview.render());
     preview.render();
+    if (transport) transport.autoplay();
   }
 
   // ------------------------------------------------------------- framed shell (lean; host = Phase 4)
@@ -737,7 +810,9 @@
       }
     });
     if (tool.preview && tool.preview.background) fill.style.background = tool.preview.background;
+    const transport = addTransport(stage, preview);
     preview.render();
+    if (transport) transport.autoplay();
     post({
       type: "kazam/ready",
       tool: { id: tool.id, name: tool.name, tagline: tool.tagline || "", render: tool.render, duration: tool.duration || 0, exportFormats: tool.exportFormats || ["svg", "png"], preview: tool.preview || null },
@@ -747,8 +822,8 @@
 
   // ------------------------------------------------------------- entry
   function defineTool(tool) {
-    if (!tool || !tool.id || typeof tool.build !== "function") {
-      throw new Error("Kazam.defineTool: requires { id, build, settings }");
+    if (!tool || !tool.id || (typeof tool.build !== "function" && typeof tool.frame !== "function")) {
+      throw new Error("Kazam.defineTool: requires { id, settings, and build() and/or frame() }");
     }
     const framed = window.self !== window.top;
     const boot = () => (framed ? bootFramed(tool) : bootStandalone(tool));

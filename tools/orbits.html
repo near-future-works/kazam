@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Orbits</title>
+<script src="../frame/kazam.js"></script>
+</head>
+<body>
+<script>
+// A tiny ANIMATED canvas tool. The contract: declare `duration` (seconds) +
+// `frame(state, t, ctx)`; the runtime runs the loop, the transport scrubs it.
+//
+// Determinism pattern for animation: per-dot randomness comes from
+// ctx.random.hash(i, …) (stable across frames), and motion comes from `t`.
+// Each dot completes a whole number of turns over the loop, so it's seamless.
+
+Kazam.defineTool({
+  id: 'orbits',
+  name: 'Orbits',
+  version: 1,
+  render: 'canvas',
+  tagline: 'Looping orbital dots — a small animated canvas demo.',
+  duration: 6,            // seconds
+  fps: 30,
+  groups: ['Canvas', 'Motion', 'Colour'],
+  preview: { background: '#0e0f13' },
+  exportFormats: ['png'], // animated export (GIF/WebM) is the next runtime pass
+
+  settings: {
+    size:    { type: 'number', label: 'Size', group: 'Canvas', default: 600, min: 200, max: 1600, step: 10, unit: 'px' },
+
+    count:   { type: 'slider', label: 'Dots', group: 'Motion', col: 'half', default: 80, min: 1, max: 400, step: 1 },
+    speed:   { type: 'slider', label: 'Speed', group: 'Motion', col: 'half', default: 1, min: 1, max: 6, step: 1 },
+    spread:  { type: 'slider', label: 'Spread', group: 'Motion', default: 0.42, min: 0.1, max: 0.5, step: 0.01, format: 'percent' },
+    dotSize: { type: 'slider', label: 'Dot size', group: 'Motion', col: 'half', default: 4, min: 1, max: 24, step: 0.5, unit: 'px' },
+    trail:   { type: 'slider', label: 'Trail', group: 'Motion', col: 'half', default: 0.5, min: 0, max: 1, step: 0.01, format: 'percent' },
+
+    fg:      { type: 'color', label: 'Dots', group: 'Colour', default: { hex: '#9bf6c0', opacity: 1 } },
+    bg:      { type: 'color', label: 'Background', group: 'Colour', default: { hex: '#0e0f13', opacity: 1 } },
+  },
+
+  size: (s) => ({ width: s.size, height: s.size }),
+
+  frame(state, t, ctx) {
+    const c = ctx.ctx2d, W = ctx.width, H = ctx.height, cx = W / 2, cy = H / 2;
+    const prog = ctx.duration ? t / ctx.duration : 0;   // 0 → 1 over the loop
+    const minDim = Math.min(W, H);
+    const trailSteps = Math.round(state.trail * 12);
+
+    c.fillStyle = (state.bg && state.bg.hex) || '#000';
+    c.fillRect(0, 0, W, H);
+
+    const fg = (state.fg && state.fg.hex) || '#fff';
+    for (let i = 0; i < state.count; i++) {
+      const radius = (0.12 + state.spread * ctx.random.hash(i, 1)) * minDim;
+      const phase = ctx.random.hash(i, 2) * Math.PI * 2;
+      const dir = ctx.random.hash(i, 3) < 0.5 ? 1 : -1;
+      const turns = state.speed + (ctx.random.hash(i, 4) < 0.5 ? 0 : 1);   // integer → seamless loop
+      const ang = phase + dir * turns * prog * Math.PI * 2;
+
+      c.fillStyle = fg;
+      for (let s = trailSteps; s >= 0; s--) {
+        const a = ang - dir * s * 0.05;
+        const x = cx + Math.cos(a) * radius, y = cy + Math.sin(a) * radius;
+        c.globalAlpha = s === 0 ? 1 : 0.45 * (1 - s / (trailSteps + 1));
+        const r = state.dotSize * (s === 0 ? 1 : 0.7);
+        c.beginPath(); c.arc(x, y, r, 0, Math.PI * 2); c.fill();
+      }
+    }
+    c.globalAlpha = 1;
+  },
+});
+</script>
+</body>
+</html>
