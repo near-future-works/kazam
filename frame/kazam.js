@@ -587,22 +587,18 @@
     };
     img.src = url;
   }
+  // Produce an export artifact for either render target; cb gets {kind:'text',text} | {kind:'blob',blob} | null.
+  function exportArtifact(tool, el, format, scale, cb) {
+    if (format === "svg") { if (tool.render === "canvas" || !el) return cb(null); return cb({ kind: "text", text: svgString(el) }); }
+    if (tool.render === "canvas") { el.toBlob(b => cb({ kind: "blob", blob: b }), "image/png"); return; }
+    rasterise(el, scale || 2, b => cb({ kind: "blob", blob: b }));
+  }
   function exporter(tool, preview) {
-    const isCanvas = tool.render === "canvas";
     return {
-      downloadSVG() { if (isCanvas) return; download(new Blob([svgString(preview.current)], { type: "image/svg+xml" }), `${tool.id}.svg`); },
-      copySVG() { if (isCanvas) return; return navigator.clipboard.writeText(svgString(preview.current)); },
-      downloadPNG(scale) {
-        scale = scale || 2;
-        if (isCanvas) { preview.current.toBlob(b => download(b, `${tool.id}@${scale}x.png`), "image/png"); return; }
-        rasterise(preview.current, scale, b => download(b, `${tool.id}@${scale}x.png`));
-      },
-      copyPNG(scale) {
-        scale = scale || 2;
-        const put = b => navigator.clipboard.write([new ClipboardItem({ "image/png": b })]).catch(() => {});
-        if (isCanvas) { preview.current.toBlob(put, "image/png"); return; }
-        rasterise(preview.current, scale, put);
-      },
+      downloadSVG() { exportArtifact(tool, preview.current, "svg", 1, a => a && download(new Blob([a.text], { type: "image/svg+xml" }), `${tool.id}.svg`)); },
+      copySVG() { exportArtifact(tool, preview.current, "svg", 1, a => a && navigator.clipboard.writeText(a.text)); },
+      downloadPNG(scale) { scale = scale || 2; exportArtifact(tool, preview.current, "png", scale, a => a && download(a.blob, `${tool.id}@${scale}x.png`)); },
+      copyPNG(scale) { exportArtifact(tool, preview.current, "png", scale || 2, a => a && navigator.clipboard.write([new ClipboardItem({ "image/png": a.blob })]).catch(() => {})); },
     };
   }
 
@@ -712,8 +708,8 @@
       else if (d.type === "kazam/tokens") { document.documentElement.classList.toggle("dark", !!d.dark); preview.render(); }
       else if (d.type === "kazam/preview-bg") { fill.style.background = d.color || "transparent"; }
       else if (d.type === "kazam/export") {
-        if (d.format === "svg") post({ type: "kazam/export-result", requestId: d.requestId, format: "svg", ok: true, payload: { kind: "text", text: svgString(preview.current) } });
-        else rasterise(preview.current, d.scale || 2, b => post({ type: "kazam/export-result", requestId: d.requestId, format: "png", ok: true, payload: { kind: "blob", blob: b } }));
+        exportArtifact(tool, preview.current, d.format, d.scale || 2, payload =>
+          post({ type: "kazam/export-result", requestId: d.requestId, format: d.format, ok: !!payload, payload: payload }));
       }
     });
     if (tool.preview && tool.preview.background) fill.style.background = tool.preview.background;

@@ -264,14 +264,24 @@ authoring step, never required to run; see open question below.)
 
 ## Build order / status
 
-1. **Scaffold + contract** — this file, repo layout, worked example.  ← *current; awaiting sign-off*
-2. Runtime, standalone first (`frame/kazam.js`): `defineTool`, schema→controls, store +
-   serialise, preview host, export/copy, tokens, seeded RNG; render a standalone shell for a
-   trivial tool.
-3. Port the Shape generator to `tools/dither-shape.html` — keep only `buildSVG` + its geometry
-   and dither maths; must match the original when opened directly.
-4. Frame host (`frame/index.html`): list tools, embed via iframe + `postMessage`, add switcher,
-   theming, presets. Same tool file works both ways, unchanged.
-5. Generalise: add the `canvas` render target + a minimal canvas example.
+1. **Scaffold + contract** — this file, repo layout, worked example. ✅
+2. **Runtime** (`frame/kazam.js`), standalone-first: `defineTool`, schema→controls, store +
+   serialise, preview host, export/copy, tokens, seeded RNG. ✅
+3. **Port the Shape generator** to `tools/dither-shape.html` — only `buildSVG` + its geometry
+   and dither maths; full visual + feature parity when opened directly. ✅
+4. **Frame host** (`frame/index.html`): tool switcher, iframe + `postMessage`, two-up pairing,
+   theming, presets, unified export. Same tool file works both ways, unchanged. ✅
+5. **Generalise**: `canvas` render target + a minimal canvas tool
+   (`tools/dither-gradient.html`). ✅
 
-> Work in small, reviewable steps and pause for sign-off between phases.
+### Not yet built (future)
+
+- **Optional inliner** — bundle `kazam.js` into a tool to ship one self-contained file.
+- **Asset field types** (`image`, `points`/`path`) — reserved in the contract; build when the
+  first asset tool needs them.
+- **Animation** — `duration` + `frame(state, t, ctx)` and GIF/video export (the Letterfall port
+  is the real stress test).
+- **Tighten `postMessage` origin** once tools are served from a known origin.
+
+> Tools live in `tools/`; each is one HTML file = `defineTool({ settings, build })` + its maths.
+> Everything else is the runtime. Work in small, reviewable steps; pause for sign-off between phases.

@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Gradient Dither</title>
+<script src="../frame/kazam.js"></script>
+</head>
+<body>
+<script>
+// Minimal CANVAS tool: an ordered/noise dithered gradient drawn straight into
+// the 2D context. Proves the contract isn't SVG-only — same schema/build shape,
+// but render:'canvas', a size() for the canvas, and drawing via ctx.ctx2d.
+
+const BAYER8 = [
+  [ 0,48,12,60, 3,51,15,63],[32,16,44,28,35,19,47,31],
+  [ 8,56, 4,52,11,59, 7,55],[40,24,36,20,43,27,39,23],
+  [ 2,50,14,62, 1,49,13,61],[34,18,46,30,33,17,45,29],
+  [10,58, 6,54, 9,57, 5,53],[42,26,38,22,41,25,37,21],
+];
+
+Kazam.defineTool({
+  id: 'dither-gradient',
+  name: 'Gradient Dither',
+  version: 1,
+  render: 'canvas',
+  tagline: 'An ordered or noisy dithered gradient, drawn on canvas.',
+  groups: ['Canvas', 'Dither', 'Colour'],
+  exportFormats: ['png'],            // canvas → PNG only
+
+  settings: {
+    width:  { type: 'number', label: 'Width',  group: 'Canvas', col: 'half', default: 600, min: 100, max: 2000, step: 10, unit: 'px' },
+    height: { type: 'number', label: 'Height', group: 'Canvas', col: 'half', default: 400, min: 100, max: 2000, step: 10, unit: 'px' },
+
+    direction: { type: 'select', label: 'Direction', group: 'Dither', col: 'half', default: 'vertical',
+                 options: [
+                   { value: 'vertical', label: 'Vertical' }, { value: 'horizontal', label: 'Horizontal' },
+                   { value: 'diagonal', label: 'Diagonal' }, { value: 'radial', label: 'Radial' },
+                 ] },
+    pattern:   { type: 'select', label: 'Pattern', group: 'Dither', col: 'half', default: 'ordered',
+                 options: [{ value: 'ordered', label: 'Ordered' }, { value: 'noise', label: 'Noise' }] },
+    cell:      { type: 'slider', label: 'Cell size', group: 'Dither', default: 4, min: 1, max: 16, step: 1, unit: 'px' },
+
+    from: { type: 'color', label: 'From', group: 'Colour', default: { hex: '#1f2e1c', opacity: 1 } },
+    to:   { type: 'color', label: 'To',   group: 'Colour', default: { hex: '#ebf1e5', opacity: 1 } },
+  },
+
+  // canvas tools declare their pixel size so the runtime can size ctx.canvas.
+  size: (S) => ({ width: S.width, height: S.height }),
+
+  build(S, ctx) {
+    const c = ctx.ctx2d, W = ctx.width, H = ctx.height;
+    const from = (S.from && S.from.hex) || '#000000';
+    const to = (S.to && S.to.hex) || '#ffffff';
+    const cell = Math.max(1, S.cell);
+    const cx = W / 2, cy = H / 2, maxR = Math.hypot(cx, cy);
+
+    c.clearRect(0, 0, W, H);
+    for (let y = 0; y < H; y += cell) {
+      for (let x = 0; x < W; x += cell) {
+        const gx = (x / cell) | 0, gy = (y / cell) | 0;
+        let t;
+        switch (S.direction) {
+          case 'horizontal': t = x / W; break;
+          case 'diagonal':   t = (x / W + y / H) / 2; break;
+          case 'radial':     t = Math.hypot(x - cx, y - cy) / maxR; break;
+          default:           t = y / H;            // vertical
+        }
+        const threshold = S.pattern === 'noise'
+          ? ctx.random.hash(gx, gy, 1)
+          : (BAYER8[gy & 7][gx & 7] + 0.5) / 64;
+        c.fillStyle = t > threshold ? from : to;
+        c.fillRect(x, y, cell, cell);
+      }
+    }
+  },
+});
+</script>
+</body>
+</html>
