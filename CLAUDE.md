@@ -93,8 +93,9 @@ The frame renders one control per field and stores its value in `state[key]`.
 | `number` | `number`                             | plain typed field, no slider; for absolute dimensions |
 | `select` | `string`                             | `options: ['a','b']` or `[{value,label}]` |
 | `color`  | `{ hex: string \| null, opacity: number }` | `hex:null` = transparent; `opacity` ∈ 0–1 |
-| `toggle` | `boolean`                            | |
+| `toggle` | `boolean`                            | `header: true` → renders as an eye toggle in the section header |
 | `text`   | `string`                             | |
+| `image`  | `{ src(dataURL), width, height, name } \| null` | upload control; `build()` receives a decoded `{ bitmap, width, height }` (see below) |
 
 Common field keys: `label`, `default`, `group?`, `col?` (`'full'` | `'half'` — layout
 hint; see below), `showIf?(state) → bool`, `help?`.
@@ -107,8 +108,15 @@ consecutive halves into two-up rows. Both the standalone shell and the frame hon
 hint identically (the same `buildPanel(..., pair)` path), so the panel looks the same in
 either mode.
 
-**Reserved for asset tools** (declared now, implemented when first needed — see *Non-settings
-state* below): `image`, `points`/`path`.
+**Asset fields.** `image` is implemented (value stored as an inline base64 data URL so presets
+stay portable; the runtime decodes it to an `ImageBitmap` before `build()`). `points`/`path`
+remain reserved — see *Non-settings state* below.
+
+**Animation.** A tool with `duration > 0` (seconds) and a `frame(state, t, ctx)` function is
+animated: the runtime runs a `requestAnimationFrame` loop, shows a transport (play/scrub), and
+exports GIF + WebM. `ctx` gains `t`, `frame` (index), `duration`, `fps`. Determinism holds
+per-frame because `ctx.random()` reseeds per frame while `ctx.random.hash(...)` stays keyed to
+the base seed — so put motion in `t` and per-entity randomness in `hash`.
 
 ### `ctx` — what the runtime hands the tool
 
@@ -274,13 +282,20 @@ authoring step, never required to run; see open question below.)
 5. **Generalise**: `canvas` render target + a minimal canvas tool
    (`tools/dither-gradient.html`). ✅
 
+### Also built since
+
+- **Frame host extras** — "Tool settings" disclosure (copy current settings as a Claude-ready
+  prompt, copy/download the tool as a self-contained HTML, import a tool, load settings). The
+  inliner ships via "Copy/Download tool as HTML".
+- **Animation** — `duration` + `frame(state, t, ctx)`, transport, deterministic per-frame RNG,
+  and **GIF (self-written encoder) + WebM (MediaRecorder)** export. Demo: `tools/orbits.html`.
+- **Image upload** — the `image` asset field. Demo: `tools/image-dither.html`.
+
 ### Not yet built (future)
 
-- **Optional inliner** — bundle `kazam.js` into a tool to ship one self-contained file.
-- **Asset field types** (`image`, `points`/`path`) — reserved in the contract; build when the
-  first asset tool needs them.
-- **Animation** — `duration` + `frame(state, t, ctx)` and GIF/video export (the Letterfall port
-  is the real stress test).
+- **`points`/`path` asset fields** — reserved; build when a drawing tool needs them.
+- **Animated SVG export** — GIF/WebM currently cover canvas frames; SVG-animated tools rasterise
+  per frame is a TODO.
 - **Tighten `postMessage` origin** once tools are served from a known origin.
 
 > Tools live in `tools/`; each is one HTML file = `defineTool({ settings, build })` + its maths.
