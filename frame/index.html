@@ -21,6 +21,16 @@
   .host-toolsel { padding: 0 16px 12px; }
   .host-tooldesc { color: hsl(var(--muted-foreground)); font-size: 11px; line-height: 1.4; margin-top: 8px; }
   .host-tooldesc:empty { display: none; }
+  /* collapsible Tool & presets disclosure (power-user moves, tucked away) */
+  .host-disc { border-top: 1px solid hsl(var(--border)); }
+  .host-disc-toggle { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    background: none; border: none; color: hsl(var(--foreground)); font: inherit; font-weight: 600; font-size: 13px;
+    cursor: pointer; padding: 12px 16px; }
+  .host-disc-toggle .chev { color: hsl(var(--muted-foreground)); transition: transform .15s; }
+  .host-disc-toggle[aria-expanded="true"] .chev { transform: rotate(180deg); }
+  .host-disc-body { padding: 0 16px 14px; }
+  .host-disc-group + .host-disc-group { margin-top: 12px; }
+  .host-disc-group .lbl { font-size: 11px; color: hsl(var(--muted-foreground)); margin-bottom: 6px; }
   .host-stage { position: relative; overflow: hidden; }
   .host-frame { width: 100%; height: 100%; border: 0; display: block; }
   .host-bar { position: absolute; top: 10px; right: 10px; z-index: 2; display: flex; align-items: center; gap: 6px;
@@ -42,24 +52,31 @@
         <select class="kz-select" id="toolSel"></select>
         <div class="host-tooldesc" id="toolDesc"></div>
       </div>
-      <div class="kz-section">
-        <div class="kz-sechead"><h2>Tool</h2></div>
-        <div class="kz-btnrow">
-          <button class="kz-btn" id="copyTool">Copy</button>
-          <button class="kz-btn" id="downloadTool">Download</button>
-          <button class="kz-btn" id="importTool">Import</button>
+      <div class="host-disc">
+        <button class="host-disc-toggle" id="discToggle" aria-expanded="false" aria-controls="discBody">
+          <span>Tool &amp; presets</span>
+          <svg class="chev" viewBox="0 0 12 12" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4.5 6 7.5 9 4.5"/></svg>
+        </button>
+        <div class="host-disc-body" id="discBody" hidden>
+          <div class="host-disc-group">
+            <div class="lbl">Tool</div>
+            <div class="kz-btnrow">
+              <button class="kz-btn" id="copyTool">Copy</button>
+              <button class="kz-btn" id="downloadTool">Download</button>
+              <button class="kz-btn" id="importTool">Import</button>
+            </div>
+          </div>
+          <div class="host-disc-group">
+            <div class="lbl">Preset</div>
+            <div class="kz-btnrow">
+              <button class="kz-btn" id="copyPreset">Copy</button>
+              <button class="kz-btn" id="loadPreset">Load</button>
+            </div>
+          </div>
+          <input type="file" id="importInput" accept=".html,text/html" style="display:none">
         </div>
-        <input type="file" id="importInput" accept=".html,text/html" style="display:none">
       </div>
       <div id="controls"></div>
-      <div class="kz-section" id="presetSection">
-        <div class="kz-sechead"><h2>Presets</h2></div>
-        <div class="kz-btnrow">
-          <button class="kz-mini" id="copyJson">Copy JSON</button>
-          <button class="kz-mini" id="copyMd">Copy Markdown</button>
-          <button class="kz-mini" id="loadState">Load</button>
-        </div>
-      </div>
       <div class="kz-section" id="exportSection">
         <div class="kz-sechead"><h2>Export</h2></div>
         <div class="kz-btnrow" id="exportRow"></div>
@@ -183,15 +200,27 @@ importInput.addEventListener("change", async e => {
   toolSel.value = id; loadTool(entry);
 });
 
-// ---- presets ----
-document.getElementById("copyJson").addEventListener("click", () => current && navigator.clipboard.writeText(current.store.serialise()));
-document.getElementById("copyMd").addEventListener("click", () => {
+// ---- disclosure (Tool & presets) ----
+const discToggle = document.getElementById("discToggle"), discBody = document.getElementById("discBody");
+discToggle.addEventListener("click", () => {
+  const open = discToggle.getAttribute("aria-expanded") === "true";
+  discToggle.setAttribute("aria-expanded", String(!open));
+  discBody.hidden = open;
+});
+
+// ---- presets: one Copy (Markdown w/ an embedded JSON block); Load reads Markdown or JSON ----
+document.getElementById("copyPreset").addEventListener("click", () => {
   if (!current) return;
-  const s = current.store.get();
-  const md = `# ${current.tool.name} preset\n\n` + Object.keys(s).map(k => `- **${k}**: ${JSON.stringify(s[k])}`).join("\n") + "\n";
+  const md = `# ${current.tool.name} preset\n\n\`\`\`json\n${current.store.serialise()}\n\`\`\`\n`;
   navigator.clipboard.writeText(md);
 });
-document.getElementById("loadState").addEventListener("click", () => { if (!current) return; const j = prompt("Paste state JSON"); if (j) current.store.deserialise(j); });
+document.getElementById("loadPreset").addEventListener("click", () => {
+  if (!current) return;
+  const txt = prompt("Paste preset (Markdown or JSON)");
+  if (!txt) return;
+  const m = txt.match(/```json\s*([\s\S]*?)```/i) || txt.match(/\{[\s\S]*\}/);
+  current.store.deserialise(m ? (m[1] || m[0]) : txt);
+});
 
 // ---- theme ----
 document.getElementById("themeBtn").addEventListener("click", () => {
