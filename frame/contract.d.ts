@@ -47,6 +47,12 @@ export type StateValue =
 /** The whole tool state: one entry per settings key. */
 export type State = Record<string, StateValue>;
 
+/**
+ * A field default: a literal, or a function of the design system so a tool can
+ * default its output to the configured palette/fonts (e.g. `(d) => d.palette[0]`).
+ */
+export type Default<T> = T | ((design: Design) => T);
+
 // --------------------------------------------------------------- field schema
 
 export interface BaseField {
@@ -64,7 +70,7 @@ export interface BaseField {
 }
 
 export interface NumericField extends BaseField {
-  default?: number | null;
+  default?: Default<number | null>;
   min: number;
   max: number;
   step?: number;
@@ -88,7 +94,7 @@ export interface NumberField extends NumericField {
 
 export interface SelectField extends BaseField {
   type: 'select';
-  default?: string;
+  default?: Default<string>;
   options: SelectOption[];
   /** Launcher selects write a preset value into another field… */
   presets?: Record<string, StateValue>;
@@ -98,7 +104,7 @@ export interface SelectField extends BaseField {
 
 export interface ColorField extends BaseField {
   type: 'color';
-  default?: ColorValue | null;
+  default?: Default<ColorValue | null>;
   /** Renders an "Add …/remove" affordance; an optional colour starts `null`. */
   optional?: boolean;
   addLabel?: string;
@@ -106,23 +112,23 @@ export interface ColorField extends BaseField {
 
 export interface ToggleField extends BaseField {
   type: 'toggle';
-  default?: boolean;
+  default?: Default<boolean>;
 }
 
 export interface TextField extends BaseField {
   type: 'text';
-  default?: string;
+  default?: Default<string>;
 }
 
 export interface ImageField extends BaseField {
   type: 'image';
-  default?: ImageValue | null;
+  default?: Default<ImageValue | null>;
   addLabel?: string;
 }
 
 export interface SwatchesField extends BaseField {
   type: 'swatches';
-  default?: string[];
+  default?: Default<string[]>;
   /** Max number of chips (default 16). */
   max?: number;
 }
@@ -155,6 +161,8 @@ export interface Ctx {
   width: number;
   height: number;
   tokens: Tokens;
+  /** The design system describing tool output (palette/fonts/accent/radius). */
+  design: Design;
   random: Random;
   seed: number;
   mode: 'standalone' | 'framed';
@@ -186,6 +194,30 @@ export interface Tokens {
     secondary: string;
   };
   radius: string;
+}
+
+/** A font choice in the design system. */
+export interface DesignFont {
+  id: string;
+  label: string;
+  /** CSS font-family stack. */
+  stack: string;
+}
+
+/**
+ * The design system: describes TOOL OUTPUT (not the frame chrome). Lives in
+ * frame/tokens.json (committable) over baked defaults, with a localStorage
+ * override for live edits. Handed to tools as `ctx.design`.
+ */
+export interface Design {
+  version?: number;
+  /** Output colour palette (hex strings). */
+  palette: string[];
+  fonts: DesignFont[];
+  /** Primary brand/accent colour (hex). */
+  accent: string;
+  /** Output corner-radius hint (px). */
+  radius: number;
 }
 
 // --------------------------------------------------------------- tool def
@@ -284,6 +316,12 @@ export interface Store {
 export interface KazamGlobal {
   defineTool(tool: ToolDef): ToolDef;
   version: number;
+  /** Design system accessors (tool-output palette/fonts/accent/radius). */
+  getDesign(): Design;
+  setDesign(next: Partial<Design>, opts?: { persist?: boolean }): void;
+  onDesignChange(fn: (design: Design) => void): () => void;
+  fontStackById(id: string): string;
+  DEFAULT_DESIGN: Design;
   host: Record<string, unknown>;
 }
 
