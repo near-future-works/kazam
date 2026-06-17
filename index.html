@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Kazam</title>
-<script src="kazam.js"></script>
+<script src="frame/kazam.js"></script>
 <style>
   /* Host chrome. Reuses Kazam's injected tokens + component CSS (kz-*). */
   body { margin: 0; }
@@ -87,13 +87,13 @@ const V = Kazam.version;
 const CHECKER = "repeating-conic-gradient(#9aa0ac 0% 25%, #f5f6f8 0% 50%) 50% / 12px 12px";
 
 const TOOLS = [
-  { id: "dither-shape",    name: "Shape Generator", path: "../tools/dither-shape.html" },
-  { id: "dither-gradient", name: "Gradient Dither", path: "../tools/dither-gradient.html" },
-  { id: "pixelator",       name: "Pixelator",       path: "../tools/pixelator.html" },
-  { id: "letterfall",      name: "Letterfall",      path: "../tools/letterfall.html" },
-  { id: "orbits",          name: "Orbits",          path: "../tools/orbits.html" },
-  { id: "image-dither",    name: "Image Dither",    path: "../tools/image-dither.html" },
-  { id: "starter",         name: "Starter",         path: "../tools/_template.html" },
+  { id: "dither-shape",    name: "Shape Generator", path: "tools/dither-shape.html" },
+  { id: "dither-gradient", name: "Gradient Dither", path: "tools/dither-gradient.html" },
+  { id: "pixelator",       name: "Pixelator",       path: "tools/pixelator.html" },
+  { id: "letterfall",      name: "Letterfall",      path: "tools/letterfall.html" },
+  { id: "orbits",          name: "Orbits",          path: "tools/orbits.html" },
+  { id: "image-dither",    name: "Image Dither",    path: "tools/image-dither.html" },
+  { id: "starter",         name: "Starter",         path: "tools/_template.html" },
 ];
 
 const frame = document.getElementById("toolFrame");
@@ -188,7 +188,7 @@ function onExportResult(d) {
 async function selfContainedSource() {
   const raw = await fetch(currentPath).then(r => r.text());
   if (!/src=["'][^"']*kazam\.js["']/i.test(raw)) return raw; // already self-contained
-  const rt = await fetch("kazam.js").then(r => r.text());
+  const rt = await fetch("frame/kazam.js").then(r => r.text());
   return Kazam.host.inlineRuntime(raw, rt);
 }
 document.getElementById("copyHtml").addEventListener("click", async (e) => {

@@ -84,5 +84,16 @@ Kazam.defineTool({
   },
 });
 </script>
+<script>
+// Standalone fallback — shown only if frame/kazam.js failed to load (e.g. this tool
+// file was opened on its own, away from its Kazam folder). No-op when present.
+if (typeof Kazam === 'undefined') document.body.innerHTML =
+  '<div style="max-width:34rem;margin:14vh auto;padding:0 1.5rem;font:15px/1.65 -apple-system,BlinkMacSystemFont,Segoe UI,system-ui,sans-serif;color:#1b1b1b">'
+  + '<h1 style="font-size:1.2rem;margin:0 0 .5rem">This is a standalone Kazam design tool</h1>'
+  + '<p style="margin:0 0 1rem;color:#555">It needs the Kazam runtime to run, and couldn’t find it.</p>'
+  + '<p style="margin:0 0 1rem;color:#555">Get the full toolkit — frame, runtime and tools — at <a href="https://github.com/near-future-works/kazam" style="color:#2b6cff">github.com/near-future-works/kazam</a>, then open this file from inside it.</p>'
+  + '<p style="margin:0;color:#8a8a8a;font-size:13px">Sharing just one tool? Use the frame’s “Copy tool as HTML”, which bakes the runtime in so the file runs anywhere on its own.</p>'
+  + '</div>';
+</script>
 </body>
 </html>
