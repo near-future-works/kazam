@@ -63,7 +63,7 @@
         <div class="host-disc-body" id="discBody" hidden>
           <div class="host-action">
             <button class="kz-btn" id="copySettings">Copy current settings</button>
-            <div class="host-action-desc">Paste into Claude to set these as the tool’s default.</div>
+            <div class="host-action-desc">Paste into your AI agent to set these as the tool’s default.</div>
           </div>
           <div class="host-action">
             <button class="kz-btn" id="copyHtml">Copy tool as HTML</button>
@@ -206,7 +206,7 @@ discToggle.addEventListener("click", () => {
   discBody.hidden = open;
 });
 
-// ---- "Copy current settings": a Claude-ready instruction with an embedded JSON block ----
+// ---- "Copy current settings": an agent-ready instruction with an embedded JSON block ----
 document.getElementById("copySettings").addEventListener("click", (e) => {
   if (!current) return;
   const txt =

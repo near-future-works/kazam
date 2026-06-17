@@ -259,6 +259,68 @@ share a single tool remains the frame's "Copy tool as HTML" (runtime inlined →
 
 ---
 
+## The bundled tools are examples (delete freely)
+
+The tools in `tools/` (Shape Generator, Pixelator, Image Dither, Orbits, Gradient Dither,
+Letterfall) ship as **worked examples** — reference material, not a fixed product. A user is
+expected to keep the ones they like, delete the rest, and fill `tools/` with their own. When
+a user asks to remove an example tool, delete its `tools/*.html` file and its entry in the
+`TOOLS` array in `index.html` — that's all it takes. Never treat the examples as load-bearing.
+
+---
+
+## Importing an existing tool a user already has
+
+A common starting point: a user already has a single-file HTML generator (an SVG/canvas
+"toy" they built with an agent, a CodePen export, a standalone widget) and wants it living
+inside Kazam. Importing means **rewriting it onto the contract**, not pasting it in as-is:
+pull its tweakable values up into a `settings` schema, move its drawing code into `build`
+(or `frame` if it animates), and route all randomness through `ctx.random`. The original
+control wiring, export code, and panel CSS are deleted — the runtime owns all of that now.
+
+**What ports cleanly** (suggest these freely):
+
+- Self-contained generators that draw an **SVG or `<canvas>`** from a handful of numbers,
+  colours, and toggles — dither/pattern/gradient/poster/geometry tools. This is the sweet spot.
+- Tools whose output is **deterministic** or can be made so by swapping `Math.random` for a
+  seed. Determinism is mandatory here, so this swap is part of every import.
+- Single-file tools with **no build step and no framework** — plain HTML/CSS/JS.
+- Tools that take **one uploaded image** (use the `image` field) or that animate on a clock
+  (use `duration` + `frame`).
+
+**What fights the format** (flag honestly before starting):
+
+- Anything needing a **build step, npm packages, or many source files** — React/Vue/Svelte
+  apps, TypeScript projects, bundled dependencies. Porting means reimplementing in vanilla JS.
+- Tools that **fetch from a network**, need an API key, or talk to a backend at runtime.
+- **Heavy non-determinism or external state** (live data feeds, the system clock as input,
+  persistent storage) — these break the "same settings → same output" guarantee.
+- Rich **direct-manipulation canvases** (free drawing, node graphs) — the `points`/`path`
+  input types are reserved for this but not built yet, so there's nothing to hang them on.
+- Large CDN libraries (three.js, p5, etc.) — possible if flagged first (a CDN dep must be
+  raised before adding), but it costs the single-file portability the format exists for.
+
+**Sample prompts** a user can paste to their agent (and the shape to expect):
+
+```text
+Import the attached HTML tool into Kazam as tools/<name>.html. Read CLAUDE.md first,
+copy tools/_template.html as the starting shape, and rewrite it onto the contract:
+lift every value I might tweak into the settings schema, move the drawing into build(),
+and replace any Math.random with ctx.random so it stays deterministic. Then add it to
+the TOOLS list in index.html so the frame picks it up.
+```
+
+```text
+I made this generator with another agent — here's the file. Before porting, tell me what
+will and won't survive the move to Kazam's single-file, deterministic, no-build format,
+and flag anything that needs a CDN library or a network call.
+```
+
+When importing, work in the same small, reviewable steps as building from scratch: schema
+first, then `build`, then wire it into `index.html`, then check parity against the original.
+
+---
+
 ## Conventions & constraints
 
 - Vanilla HTML/CSS/JS, runtime and tools. **No framework, no build step to run a tool.**
