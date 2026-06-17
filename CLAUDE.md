@@ -228,22 +228,34 @@ asset tool needs them.
 /
 ├── CLAUDE.md              # this file — the living contract + worked example
 ├── README.md             # project overview
+├── index.html            # the frame host app: tool switcher, theming, presets — the entry point
+│                         #   ("hit go" file after unzipping). References frame/kazam.js + tools/*.
 ├── frame/
-│   ├── kazam.js          # the runtime: defineTool, schema→controls, store, preview,
-│   │                     #   export/copy, tokens, seeded RNG, standalone shell + iframe bridge
-│   │                     #   (also injects component CSS + theme tokens — one <script> per tool)
-│   └── index.html        # the frame host app: tool switcher, theming, presets  (Phase 4)
+│   └── kazam.js          # the runtime: defineTool, schema→controls, store, preview,
+│                         #   export/copy, tokens, seeded RNG, standalone shell + iframe bridge
+│                         #   (also injects component CSS + theme tokens — one <script> per tool)
 ├── tools/
 │   ├── _template.html    # minimal worked example — copy this to start a new tool
 │   └── dither-shape.html # the Shape generator, ported onto the runtime          (Phase 3)
 └── .claude/launch.json   # local static-server config for the preview tooling
 ```
 
+The host app lives at the repo **root** (`index.html`) so that unzipping the folder and
+double-clicking it is the obvious way to start; it pulls in `frame/kazam.js` and embeds each
+`tools/*.html` in an iframe.
+
 A tool includes the runtime with a single relative `<script src="../frame/kazam.js">`,
 which also injects the shared CSS and theme tokens — so the only thing in a tool's `<head>`
 is that one tag. Opening a tool on `file://` works because the path is relative and intact
 within the repo. (A truly portable *single-file* build — runtime inlined — is an optional
 authoring step, never required to run; see open question below.)
+
+**Standalone fallback.** Each tool ends with a tiny inline guard before `</body>`: if the
+runtime global is missing (`typeof Kazam === 'undefined'` — e.g. the file was shared on its
+own, away from its Kazam folder), it replaces the blank page with a short note explaining
+what the file is and linking the repo. It is a no-op whenever the runtime loaded, and is the
+one piece of boilerplate every tool carries beyond the `<head>` include. The blessed way to
+share a single tool remains the frame's "Copy tool as HTML" (runtime inlined → needs nothing).
 
 ---
 
@@ -310,7 +322,7 @@ is git-ignored. Nothing here is needed to open a tool.
    serialise, preview host, export/copy, tokens, seeded RNG. ✅
 3. **Port the Shape generator** to `tools/dither-shape.html` — only `buildSVG` + its geometry
    and dither maths; full visual + feature parity when opened directly. ✅
-4. **Frame host** (`frame/index.html`): tool switcher, iframe + `postMessage`, two-up pairing,
+4. **Frame host** (`index.html`, repo root): tool switcher, iframe + `postMessage`, two-up pairing,
    theming, presets, unified export. Same tool file works both ways, unchanged. ✅
 5. **Generalise**: `canvas` render target + a minimal canvas tool
    (`tools/dither-gradient.html`). ✅
