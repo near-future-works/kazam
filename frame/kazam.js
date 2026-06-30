@@ -93,7 +93,7 @@
   .kz-caret { background: none; border: 0; padding: 2px; margin: 0; display: inline-flex; align-items: center;
     color: hsl(var(--muted-foreground)); cursor: pointer; transition: transform .15s; }
   .kz-caret svg { width: 12px; height: 12px; }
-  .kz-section.kz-collapsed .kz-caret { transform: rotate(90deg); }
+  .kz-section.kz-collapsed .kz-caret { transform: rotate(180deg); }
   .kz-section.kz-collapsed > *:not(.kz-sechead) { display: none; }
   .kz-section.kz-collapsed .kz-sechead { margin-bottom: 0; }
   .kz-vis { width: 24px; height: 24px; padding: 0; border: none; background: none; border-radius: 5px;
