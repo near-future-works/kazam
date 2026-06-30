@@ -21,17 +21,14 @@
   .host-toolsel { padding: 0 16px 12px; }
   .host-tooldesc { color: hsl(var(--muted-foreground)); font-size: 11px; line-height: 1.4; margin-top: 8px; }
   .host-tooldesc:empty { display: none; }
-  /* collapsible Tool & presets disclosure (power-user moves, tucked away) */
-  .host-disc { border-top: 1px solid hsl(var(--border)); }
-  .host-disc-toggle { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 8px;
-    background: none; border: none; color: hsl(var(--foreground)); font: inherit; font-weight: 600; font-size: 13px;
-    cursor: pointer; padding: 12px 16px; }
-  .host-disc-toggle .chev { color: hsl(var(--muted-foreground)); transition: transform .15s; }
-  .host-disc-toggle[aria-expanded="true"] .chev { transform: rotate(180deg); }
-  .host-disc-body { padding: 0 16px 14px; }
-  .host-action + .host-action { margin-top: 14px; }
-  .host-action .kz-btn { width: 100%; }
-  .host-action-desc { font-size: 11px; color: hsl(var(--muted-foreground)); margin-top: 5px; line-height: 1.4; }
+  /* per-tool presets row: dropdown spans the left input column (50% - 4px), Save + Copy
+     the right column — edges line up with the two-up .kz-pair grid (1fr 1fr, gap 8px). */
+  .host-presets { border-top: 1px solid hsl(var(--border)); display: flex; align-items: center; gap: 8px; padding: 12px 16px; }
+  .host-presets > * { box-sizing: border-box; min-width: 0; }
+  .host-presets #presetLabel, .host-presets #presetSel { flex: 0 0 calc(50% - 4px); }
+  .host-presets .kz-btn { flex: 0 0 calc(25% - 6px); }
+  .host-presets #presetLabel { font-size: 13px; font-weight: 600; color: hsl(var(--foreground)); }
+  .host-presets [hidden] { display: none; }
   /* frame-wide controls (backdrop + theme), tucked into Tool settings */
   .host-framectrls { margin-top: 16px; display: flex; flex-direction: column; gap: 10px; }
   .host-fieldrow { display: flex; align-items: center; gap: 8px; }
@@ -55,21 +52,11 @@
         <select class="kz-select" id="toolSel"></select>
         <div class="host-tooldesc" id="toolDesc"></div>
       </div>
-      <div class="host-disc">
-        <button class="host-disc-toggle" id="discToggle" aria-expanded="false" aria-controls="discBody">
-          <span>Tool settings</span>
-          <svg class="chev" viewBox="0 0 12 12" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4.5 6 7.5 9 4.5"/></svg>
-        </button>
-        <div class="host-disc-body" id="discBody" hidden>
-          <div class="host-action">
-            <button class="kz-btn" id="copySettings">Copy current settings</button>
-            <div class="host-action-desc">Paste into your AI agent to set these as the tool’s default.</div>
-          </div>
-          <div class="host-action">
-            <button class="kz-btn" id="copyHtml">Copy tool as HTML</button>
-            <div class="host-action-desc">Send it to a teammate to drop into their own Kazam.</div>
-          </div>
-        </div>
+      <div class="host-presets">
+        <span id="presetLabel">Settings</span>
+        <select class="kz-select" id="presetSel" aria-label="Settings" hidden></select>
+        <button class="kz-btn" id="presetSave">Save</button>
+        <button class="kz-btn" id="presetCopy">Copy</button>
       </div>
       <div id="controls"></div>
       <div class="kz-section" id="exportSection">
@@ -130,14 +117,26 @@ window.addEventListener("message", e => {
 function onReady(d) {
   const store = Kazam.host.createStore(d.state);
   Kazam.host.buildPanel(controls, { settings: d.schema, groups: d.groups }, store, /* pair */ true);
-  const unsub = store.subscribe(() => post({ type: "kazam/state", state: store.get() }));
+  const unsub = store.subscribe((s, k) => { if (k !== "_collapsed") post({ type: "kazam/state", state: store.get() }); });
   current = { tool: d.tool, store, unsub, path: currentPath };
+  // Restore presets for this tool: if any exist, apply the first so the dropdown's
+  // selection always matches the live config; otherwise show the plain "Preset" label.
+  selectedPreset = null;
+  const savedPresets = readPresets(d.tool.id), savedNames = Object.keys(savedPresets);
+  if (savedNames.length) { selectedPreset = savedNames[0]; store.replace(savedPresets[selectedPreset]); }
+  renderPresetUI();
   document.getElementById("toolDesc").textContent = d.tool.tagline || "";
 
   buildExport(d.tool);
   const exSection = document.getElementById("exportSection");
   exSection.querySelectorAll(".kz-exptoggles").forEach(e => e.remove());
   Kazam.host.renderExportToggles(exSection, d.schema, store);
+  // Export is collapsible too; the section is reused across tools, so rebuild its header
+  // fresh (dropping the previous caret + listener) before binding it to the new store.
+  const exHead = exSection.querySelector(".kz-sechead");
+  const freshHead = document.createElement("div"); freshHead.className = "kz-sechead"; freshHead.innerHTML = "<h2>Export</h2>";
+  exHead.replaceWith(freshHead);
+  Kazam.host.attachCollapse(exSection, "Export", store);
 
   post({ type: "kazam/preview-bg", color: neutralBg() });   // single neutral backdrop for every tool
   post({ type: "kazam/tokens", dark: isDark() });
@@ -180,39 +179,76 @@ function onExportResult(d) {
   Kazam.host.download(d.payload.blob, name);
 }
 
-// ---- tool file: copy / download / import ----
-// Inline the host's kazam.js into a tool's source so it becomes a single
-// self-contained file (and so blob-URL imports resolve their runtime). The
-// string substitution is the shared, tested Kazam.host.inlineRuntime; the host
-// just supplies the fetched runtime text.
-async function selfContainedSource() {
-  const raw = await fetch(currentPath).then(r => r.text());
-  if (!/src=["'][^"']*kazam\.js["']/i.test(raw)) return raw; // already self-contained
-  const rt = await fetch("frame/kazam.js").then(r => r.text());
-  return Kazam.host.inlineRuntime(raw, rt);
+// ---- per-tool presets (auto-numbered "Preset N", saved in localStorage by tool id) ----
+// Before any save: a plain "Preset" label (styled like a section heading). The first
+// Save creates "Preset 1" and swaps the label for a dropdown; "+ New preset" snapshots
+// the current config into the next "Preset N"; Save overwrites the selected preset.
+const presetLabel = document.getElementById("presetLabel");
+const presetSel = document.getElementById("presetSel");
+const presetsKey = id => "kazam.presets." + id;
+const readPresets = id => { try { return JSON.parse(localStorage.getItem(presetsKey(id))) || {}; } catch (e) { return {}; } };
+const writePresets = (id, obj) => { try { localStorage.setItem(presetsKey(id), JSON.stringify(obj)); } catch (e) {} };
+let selectedPreset = null;             // name of the active preset for the loaded tool, or null
+
+function nextPresetName(presets) {
+  let max = 0;
+  Object.keys(presets).forEach(n => { const m = /^Settings #(\d+)$/.exec(n); if (m) max = Math.max(max, +m[1]); });
+  return "Settings #" + (max + 1);
 }
-document.getElementById("copyHtml").addEventListener("click", async (e) => {
+
+// Show the label (no presets yet) or the populated dropdown (one or more presets).
+function renderPresetUI() {
   if (!current) return;
-  const btn = e.currentTarget;   // capture before await (currentTarget is null after it)
-  navigator.clipboard.writeText(await selfContainedSource());
-  Kazam.host.flashCopied(btn, "Copied!");
+  const names = Object.keys(readPresets(current.tool.id));
+  if (!names.length) { presetLabel.hidden = false; presetSel.hidden = true; selectedPreset = null; return; }
+  presetLabel.hidden = true; presetSel.hidden = false;
+  if (!selectedPreset || names.indexOf(selectedPreset) < 0) selectedPreset = names[0];
+  presetSel.innerHTML = "";
+  const add = (val, txt) => { const o = document.createElement("option"); o.value = val; o.textContent = txt; presetSel.appendChild(o); };
+  names.forEach(n => add(n, n));
+  add("__new", "+ New Settings");
+  add("__clear", "- Clear All Settings");
+  presetSel.value = selectedPreset;
+}
+
+// Forget every preset for the current tool and fall back to the plain "Preset" label.
+function clearAllPresets(id) {
+  if (!confirm("Clear all saved settings for this tool?")) { presetSel.value = selectedPreset; return; }
+  try { localStorage.removeItem(presetsKey(id)); } catch (e) {}
+  selectedPreset = null;
+  renderPresetUI();
+}
+
+// Snapshot the current config into a fresh "Preset N", select it, and reveal the dropdown.
+function createPreset(id) {
+  const all = readPresets(id);
+  const name = nextPresetName(all);
+  all[name] = JSON.parse(current.store.serialise());
+  writePresets(id, all);
+  selectedPreset = name;
+  renderPresetUI();
+}
+
+presetSel.addEventListener("change", () => {
+  if (!current) return;
+  const id = current.tool.id, v = presetSel.value;
+  if (v === "__new") return createPreset(id);      // add Preset N+1 from current config, select it
+  if (v === "__clear") return clearAllPresets(id); // forget all presets (with confirm)
+  current.store.replace(readPresets(id)[v]); selectedPreset = v;
 });
 
-// ---- disclosure (Tool settings) ----
-const discToggle = document.getElementById("discToggle"), discBody = document.getElementById("discBody");
-discToggle.addEventListener("click", () => {
-  const open = discToggle.getAttribute("aria-expanded") === "true";
-  discToggle.setAttribute("aria-expanded", String(!open));
-  discBody.hidden = open;
+document.getElementById("presetSave").addEventListener("click", e => {
+  if (!current) return;
+  const id = current.tool.id, all = readPresets(id);
+  if (!selectedPreset || !all[selectedPreset]) { createPreset(id); }   // first save → Preset 1
+  else { all[selectedPreset] = JSON.parse(current.store.serialise()); writePresets(id, all); }
+  Kazam.host.flashCopied(e.currentTarget, "Saved!");
 });
 
-// ---- "Copy current settings": an agent-ready instruction with an embedded JSON block ----
-document.getElementById("copySettings").addEventListener("click", (e) => {
+document.getElementById("presetCopy").addEventListener("click", e => {
   if (!current) return;
-  const txt =
-    `Set these as the default values for the "${current.tool.name}" Kazam tool — ` +
-    `update each field's \`default\` in the settings schema to match:\n\n` +
-    "```json\n" + current.store.serialise() + "\n```\n";
+  // Name the tool so the JSON is self-explanatory when pasted into an AI agent.
+  const txt = `Settings for the "${current.tool.name}" Kazam tool:\n\n` + current.store.serialise();
   navigator.clipboard.writeText(txt);
   Kazam.host.flashCopied(e.currentTarget, "Copied!");
 });

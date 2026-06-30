@@ -88,6 +88,14 @@
   .kz-section > *:last-child { margin-bottom: 0; }
   .kz-sechead { display: flex; align-items: center; justify-content: space-between; min-height: 22px; }
   .kz-sechead h2 { font-size: 13px; font-weight: 600; margin: 0; }
+  .kz-sechead-toggle { cursor: pointer; user-select: none; }
+  .kz-sechead-right { display: flex; align-items: center; gap: 6px; }
+  .kz-caret { background: none; border: 0; padding: 2px; margin: 0; display: inline-flex; align-items: center;
+    color: hsl(var(--muted-foreground)); cursor: pointer; transition: transform .15s; }
+  .kz-caret svg { width: 12px; height: 12px; }
+  .kz-section.kz-collapsed .kz-caret { transform: rotate(90deg); }
+  .kz-section.kz-collapsed > *:not(.kz-sechead) { display: none; }
+  .kz-section.kz-collapsed .kz-sechead { margin-bottom: 0; }
   .kz-vis { width: 24px; height: 24px; padding: 0; border: none; background: none; border-radius: 5px;
     display: inline-flex; align-items: center; justify-content: center; color: hsl(var(--muted-foreground)); cursor: pointer; }
   .kz-vis:hover { background: hsl(var(--secondary)); color: hsl(var(--foreground)); }
@@ -567,6 +575,7 @@
   }
 
   const EYE_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg>';
+  const CARET_SVG = '<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4.5 6 7.5 9 4.5"/></svg>';
   // a toggle mounted in the section header (e.g. an eye to enable/disable a section)
   function renderHeaderToggle(key, field, store) {
     const btn = document.createElement("button"); btn.type = "button"; btn.className = "kz-vis"; btn.title = field.label || key;
@@ -749,6 +758,34 @@
     return seen;
   }
 
+  // Make a `.kz-section` collapsible: add a caret to its header, toggle on a header
+  // click (except clicks on a header toggle/eye), and mirror open/closed into the
+  // reserved `_collapsed` list in state so it serialises with presets. Returns a
+  // `sync()` that re-applies the class from state; no-ops if a caret is already present.
+  function attachCollapse(section, group, store) {
+    const head = section.querySelector(".kz-sechead");
+    if (!head || head.querySelector(".kz-caret")) return () => {};
+    head.classList.add("kz-sechead-toggle");
+    let right = head.querySelector(".kz-sechead-right");
+    if (!right) { right = document.createElement("div"); right.className = "kz-sechead-right"; head.appendChild(right); }
+    const caret = document.createElement("button"); caret.type = "button"; caret.className = "kz-caret";
+    caret.setAttribute("aria-label", "Collapse section"); caret.innerHTML = CARET_SVG;
+    right.appendChild(caret);
+    const list = () => { const c = store.get()._collapsed; return Array.isArray(c) ? c : []; };
+    const sync = () => section.classList.toggle("kz-collapsed", new Set(list()).has(group));
+    head.addEventListener("click", e => {
+      if (e.target instanceof Element && e.target.closest(".kz-vis")) return;
+      const collapsed = !section.classList.contains("kz-collapsed");
+      section.classList.toggle("kz-collapsed", collapsed);
+      const set = new Set(list());
+      if (collapsed) set.add(group); else set.delete(group);
+      store.set("_collapsed", Array.from(set));
+    });
+    store.subscribe((_s, k) => { if (k === null || k === "_collapsed") sync(); });
+    sync();
+    return sync;
+  }
+
   function buildPanel(panel, tool, store, pair) {
     const settings = tool.settings || {};
     const groups = inferGroups(settings, tool.groups);
@@ -760,11 +797,15 @@
       const section = document.createElement("div"); section.className = "kz-section";
       const head = document.createElement("div"); head.className = "kz-sechead";
       const h2 = document.createElement("h2"); h2.textContent = group; head.appendChild(h2);
+      const right = document.createElement("div"); right.className = "kz-sechead-right";
       // header-mounted toggles (e.g. an eye that enables/disables the section)
       keys.filter(k => settings[k].header).forEach(k => {
-        const r = renderHeaderToggle(k, settings[k], store); byKey[k] = r.refresh; head.appendChild(r.node);
+        const r = renderHeaderToggle(k, settings[k], store); byKey[k] = r.refresh; right.appendChild(r.node);
       });
+      head.appendChild(right);
       section.appendChild(head);
+      // Each section can collapse; which are collapsed rides in state under `_collapsed`.
+      attachCollapse(section, group, store);
 
       // Pack consecutive 'half' body fields into two-up rows.
       const bodyKeys = keys.filter(k => !settings[k].header);
@@ -785,6 +826,7 @@
     const autoKeys = Object.keys(settings).filter(k => settings[k].auto && byKey[k]);
     // refresh a field's DOM whenever its own value changes, or all on a full replace
     store.subscribe((_s, changedKey) => {
+      if (changedKey === "_collapsed") return;   // panel chrome only; sections self-sync their carets
       if (changedKey === null) { Object.keys(byKey).forEach(k => byKey[k]()); return; }
       if (byKey[changedKey]) byKey[changedKey]();
       autoKeys.forEach(k => { if (k !== changedKey) byKey[k](); });
@@ -1203,6 +1245,7 @@
     const lj = document.createElement("button"); lj.className = "kz-mini"; lj.textContent = "Load state"; lj.addEventListener("click", () => { const j = prompt("Paste state JSON"); if (j) store.deserialise(j); }); copyRow.appendChild(lj);
     exportSection.appendChild(copyRow);
     renderExportToggles(exportSection, tool.settings || {}, store);
+    attachCollapse(exportSection, "Export", store);
     panel.appendChild(exportSection);
 
     app.append(panel, stage);
@@ -1215,7 +1258,7 @@
     applyBackdrop();
 
     const transport = addTransport(stage, preview);
-    store.subscribe(() => preview.render());
+    store.subscribe((_s, k) => { if (k !== "_collapsed") preview.render(); });   // collapsing a section is panel-only
     preview.render();
     if (transport && tool.autoplay !== false) transport.autoplay();
   }
@@ -1302,7 +1345,7 @@
   // Host-side helpers used by the frame app + the design-system accessors (kept on
   // `host` so the frame can read/write the design system around tool iframes).
   const host = {
-    createStore, resolveDefaults, buildPanel, resolveTokens, download, flashCopied,
+    createStore, resolveDefaults, buildPanel, attachCollapse, resolveTokens, download, flashCopied,
     renderExportToggles, neutralBg, inlineRuntime,
     getDesign, setDesign, onDesignChange, fontStackById,
   };

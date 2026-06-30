@@ -209,6 +209,10 @@ asset tool needs them.
 
 - **Settings panel** rendered from the schema (`slider`, `number`, `select`, `color`+opacity,
   `toggle`, `text` to start). Deletes the hand-wired control plumbing every tool re-implemented.
+  Each section has a caret to collapse it; which sections are collapsed rides in `state` under
+  the reserved `_collapsed` key (a `string[]` of group names) so it serialises with presets.
+  It never reaches the artwork — the runtime skips a preview re-render when only `_collapsed`
+  changes — but `build()` should still ignore it, like any reserved key.
 - **State store** holding the current settings object, with serialise / deserialise →
   reload-safety, undo/redo, and presets in one feature.
 - **Presets**: export current state to JSON or Markdown (clipboard); load a state object back
