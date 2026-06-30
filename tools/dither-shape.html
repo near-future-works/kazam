@@ -110,7 +110,6 @@ Kazam.defineTool({
     // the background fills the whole exported square (any shape); toggle it in Export.
     includeBg: { type: 'toggle', label: 'Include background', group: 'Colour', export: true, default: true },
 
-    strokeOn:    { type: 'toggle', label: 'Stroke', group: 'Stroke', header: true, default: true },
     strokeAlign: { type: 'select', label: 'Align', group: 'Stroke', col: 'half', default: 'outside',
                    options: [{ value: 'center', label: 'Center' }, { value: 'inside', label: 'Inside' }, { value: 'outside', label: 'Outside' }] },
     strokeWidth: { type: 'number', label: 'Width', group: 'Stroke', col: 'half', default: 2, min: 0, max: 40, step: 0.5, unit: 'px' },
@@ -123,7 +122,7 @@ Kazam.defineTool({
     const bgHex = (S.bg && S.bg.hex) ? S.bg.hex : null;
     const bgOp  = S.bg ? (S.bg.opacity != null ? S.bg.opacity : 1) : 1;
 
-    const sw = S.strokeOn ? S.strokeWidth : 0;
+    const sw = S.strokeWidth;   // stroke is off when width is 0
     const overshoot = S.strokeAlign === 'outside' ? sw : S.strokeAlign === 'center' ? sw / 2 : 0;
     const pad = Math.ceil(overshoot) + 2;
     const rx = S.width / 2, ry = S.height / 2;
@@ -137,7 +136,7 @@ Kazam.defineTool({
     const clip = ctx.svg('clipPath', { id: clipId });
     clip.append(shapeNode(ctx, S.shape, cx, cy, rx, ry, pts));
     defs.append(clip);
-    if (S.strokeOn && sw > 0 && S.strokeAlign === 'outside') {
+    if (sw > 0 && S.strokeAlign === 'outside') {
       const mask = ctx.svg('mask', { id: maskId });
       mask.append(ctx.svg('rect', { x: 0, y: 0, width: svgW, height: svgH, fill: '#fff' }));
       const bsh = shapeNode(ctx, S.shape, cx, cy, rx, ry, pts); bsh.setAttribute('fill', '#000');
@@ -204,7 +203,7 @@ Kazam.defineTool({
     }
     svg.append(dots);
 
-    if (S.strokeOn && sw > 0 && fgHex) {
+    if (sw > 0 && fgHex) {
       const ring = shapeNode(ctx, S.shape, cx, cy, rx, ry, pts);
       ring.setAttribute('fill', 'none');
       ring.setAttribute('stroke', fgHex);
