@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Showcase</title>
+<script src="../frame/kazam.js"></script>
+</head>
+<body>
+<script>
+// A crossfading reel of screenshots — drop one image per tool into the slots and the
+// runtime animates a looping slideshow you can export as GIF/WebM.
+//
+// It reuses three things the contract already gives us, with no runtime changes:
+//   • the `image` field  → each upload is decoded to an ImageBitmap before frame()
+//   • the animation loop → duration (flag) + frameCount(state) + frame(state,t,ctx)
+//   • GIF/WebM export    → the frame shows those buttons for any tool with duration > 0
+//
+// Determinism: the only "randomness" is the Ken Burns zoom direction, and it's derived
+// from the slot index (parity) — never Math.random — so a frame at time t is reproducible.
+
+const FPS = 30;
+const SLOTS = 10;
+
+// Collect the filled slots in order. The runtime has already replaced each image value
+// with a decoded { bitmap, width, height, name } (or null) via resolveState().
+function slidesOf(state) {
+  const out = [];
+  for (let i = 1; i <= SLOTS; i++) {
+    const v = state['slide' + i];
+    if (v && v.bitmap) out.push(v);
+  }
+  return out;
+}
+
+// object-fit maths: fit a w×h bitmap into a W×H box, scaled by an extra `zoom` factor,
+// centred. `fit` is 'contain' or 'cover'.
+function drawSlide(c, slide, W, H, fit, zoom) {
+  const iw = slide.width, ih = slide.height;
+  const base = fit === 'cover' ? Math.max(W / iw, H / ih) : Math.min(W / iw, H / ih);
+  const s = base * zoom;
+  const dw = iw * s, dh = ih * s;
+  c.drawImage(slide.bitmap, (W - dw) / 2, (H - dh) / 2, dw, dh);
+}
+
+const settings = {
+  width:  { type: 'number', label: 'Width',  group: 'Canvas', col: 'half', default: 1600, min: 200, max: 3840, step: 10, unit: 'px' },
+  height: { type: 'number', label: 'Height', group: 'Canvas', col: 'half', default: 1000, min: 200, max: 3840, step: 10, unit: 'px' },
+  bg:     { type: 'color',  label: 'Background', group: 'Canvas', default: { hex: '#23231f', opacity: 1 } },
+  fit:    { type: 'select', label: 'Fit', group: 'Canvas', options: ['contain', 'cover'], default: 'contain' },
+
+  hold: { type: 'slider', label: 'Seconds per slide', group: 'Timing', col: 'half', default: 2,   min: 0.5, max: 6, step: 0.1,  unit: 's' },
+  fade: { type: 'slider', label: 'Crossfade',         group: 'Timing', col: 'half', default: 0.5, min: 0,   max: 2, step: 0.05, unit: 's' },
+
+  zoom: { type: 'slider', label: 'Ken Burns zoom', group: 'Motion', default: 0.06, min: 0, max: 0.3, step: 0.01, format: 'percent' },
+};
+// 10 image slots, declared programmatically so the schema stays tidy. Empty slots are skipped.
+for (let i = 1; i <= SLOTS; i++) {
+  settings['slide' + i] = { type: 'image', label: 'Slide ' + i, group: 'Slides', addLabel: 'Add slide ' + i };
+}
+
+Kazam.defineTool({
+  id: 'showcase',
+  name: 'Showcase',
+  version: 1,
+  render: 'canvas',
+  tagline: 'A crossfading reel of your tools — drop in screenshots, export GIF/WebM.',
+  duration: 1,            // truthy => animated; the real length comes from frameCount()
+  fps: FPS,
+  autoplay: true,
+  preview: { background: '#23231f' },
+  exportFormats: ['png', 'gif', 'webm'],
+  groups: ['Canvas', 'Timing', 'Motion', 'Slides'],
+
+  settings,
+
+  size: (s) => ({ width: s.width, height: s.height }),
+
+  // Timeline = (number of filled slides) × hold, in frames. Recomputed on every state
+  // change, so adding a slide lengthens the transport and the exported clip automatically.
+  frameCount(s) {
+    const n = slidesOf(s).length || 1;
+    return Math.max(1, Math.round(n * s.hold * FPS));
+  },
+
+  frame(state, t, ctx) {
+    const c = ctx.ctx2d, W = ctx.width, H = ctx.height;
+    c.fillStyle = (state.bg && state.bg.hex) || '#000';
+    c.fillRect(0, 0, W, H);
+
+    const slides = slidesOf(state);
+    if (!slides.length) {
+      c.fillStyle = '#ffffff'; c.globalAlpha = 0.5;
+      c.textAlign = 'center'; c.textBaseline = 'middle';
+      c.font = Math.round(Math.min(W, H) * 0.035) + 'px -apple-system, system-ui, sans-serif';
+      c.fillText('Upload screenshots to build your reel', W / 2, H / 2);
+      c.globalAlpha = 1;
+      return;
+    }
+
+    const n = slides.length;
+    const holdF = Math.max(1, Math.round(state.hold * FPS));
+    const fadeF = Math.min(holdF, Math.round(state.fade * FPS));
+    const total = n * holdF;
+    const idx = ((ctx.frame % total) + total) % total;
+    const cur = Math.floor(idx / holdF) % n;
+    const local = idx - cur * holdF;
+
+    // Ken Burns: alternate zoom-in / zoom-out by slot parity so neighbours differ.
+    const zoomAt = (slideIdx, p) => {
+      if (!state.zoom) return 1;
+      return (slideIdx % 2 === 0) ? 1 + state.zoom * p : (1 + state.zoom) - state.zoom * p;
+    };
+
+    // Crossfade in from the previous slide during the first `fadeF` frames of the hold.
+    // Because slide 0 fades in from slide n-1, the loop wraps seamlessly.
+    if (fadeF > 0 && local < fadeF) {
+      const prev = (cur - 1 + n) % n;
+      drawSlide(c, slides[prev], W, H, state.fit, zoomAt(prev, 1));
+      c.globalAlpha = Math.min(1, local / fadeF);
+      drawSlide(c, slides[cur], W, H, state.fit, zoomAt(cur, local / holdF));
+      c.globalAlpha = 1;
+    } else {
+      drawSlide(c, slides[cur], W, H, state.fit, zoomAt(cur, local / holdF));
+    }
+  },
+});
+</script>
+<script>
+// Standalone fallback — shown only if frame/kazam.js failed to load (e.g. this tool
+// file was opened on its own, away from its Kazam folder). No-op when present.
+if (typeof Kazam === 'undefined') document.body.innerHTML =
+  '<div style="max-width:34rem;margin:14vh auto;padding:0 1.5rem;font:15px/1.65 -apple-system,BlinkMacSystemFont,Segoe UI,system-ui,sans-serif;color:#1b1b1b">'
+  + '<h1 style="font-size:1.2rem;margin:0 0 .5rem">This is a standalone Kazam design tool</h1>'
+  + '<p style="margin:0 0 1rem;color:#555">It needs the Kazam runtime to run, and couldn’t find it.</p>'
+  + '<p style="margin:0 0 1rem;color:#555">Get the full toolkit — frame, runtime and tools — at <a href="https://github.com/near-future-works/kazam" style="color:#2b6cff">github.com/near-future-works/kazam</a>, then open this file from inside it.</p>'
+  + '<p style="margin:0;color:#8a8a8a;font-size:13px">Sharing just one tool? Use the frame’s “Copy tool as HTML”, which bakes the runtime in so the file runs anywhere on its own.</p>'
+  + '</div>';
+</script>
+</body>
+</html>
