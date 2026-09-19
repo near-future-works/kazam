@@ -1,4 +1,11 @@
 <!DOCTYPE html>
+<!--
+  The Kazam frame. Open this file to run the tools in ./tools/.
+
+  It ships with no tools. Add one by dropping an HTML file into ./tools/ and
+  listing it in the TOOLS array below. The worked examples live in ./examples/
+  and run from their own frame at examples/index.html.
+-->
 <html lang="en" class="kz-root dark">
 <head>
 <meta charset="UTF-8">
@@ -8,6 +15,7 @@
 <style>
   /* Host chrome. Reuses Kazam's injected tokens + component CSS (kz-*). */
   body { margin: 0; }
+  [hidden] { display: none !important; }   /* beats the explicit display rules below */
   .host { display: grid; grid-template-columns: 340px 1fr; height: 100vh;
     font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
     background: hsl(var(--background)); color: hsl(var(--foreground)); }
@@ -28,7 +36,6 @@
   .host-presets #presetLabel, .host-presets #presetSel { flex: 0 0 calc(50% - 4px); }
   .host-presets .kz-btn { flex: 0 0 calc(25% - 6px); }
   .host-presets #presetLabel { font-size: 13px; font-weight: 600; color: hsl(var(--foreground)); }
-  .host-presets [hidden] { display: none; }
   /* frame-wide controls (backdrop + theme), tucked into Tool settings */
   .host-framectrls { margin-top: 16px; display: flex; flex-direction: column; gap: 10px; }
   .host-fieldrow { display: flex; align-items: center; gap: 8px; }
@@ -38,6 +45,19 @@
   .host-stage { position: relative; overflow: hidden; }
   .host-frame { width: 100%; height: 100%; border: 0; display: block; }
   .host-pick { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+  .host-link { font-size: 11px; color: hsl(var(--muted-foreground)); text-decoration: none; }
+  .host-link:hover { color: hsl(var(--foreground)); }
+  /* shown instead of the iframe when TOOLS is empty */
+  /* with no tools the sidebar holds only the brand row, so let it shrink to that
+     instead of leaving a 340px empty column */
+  .host.is-empty { grid-template-columns: auto 1fr; }
+  .host-empty { position: absolute; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 10px; padding: 24px; text-align: center; }
+  .host-empty h1 { font-size: 15px; font-weight: 600; margin: 0; color: hsl(var(--foreground)); }
+  .host-empty p { margin: 0; max-width: 34ch; font-size: 13px; line-height: 1.6; color: hsl(var(--muted-foreground)); }
+  .host-empty code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px;
+    background: hsl(var(--muted)); border-radius: 4px; padding: 1px 5px; }
+  .host-empty a { color: hsl(var(--foreground)); }
 </style>
 </head>
 <body>
@@ -46,13 +66,14 @@
       <div class="host-top">
         <span class="brand">Kazam</span>
         <span class="spacer"></span>
+        <a class="host-link" href="examples/index.html" title="Open the example tools">Examples →</a>
         <button class="host-theme" id="themeBtn" title="Toggle theme">◑</button>
       </div>
-      <div class="host-toolsel">
+      <div class="host-toolsel" id="toolSelWrap">
         <select class="kz-select" id="toolSel"></select>
         <div class="host-tooldesc" id="toolDesc"></div>
       </div>
-      <div class="host-presets">
+      <div class="host-presets" id="presetsRow">
         <span id="presetLabel">Settings</span>
         <select class="kz-select" id="presetSel" aria-label="Settings" hidden></select>
         <button class="kz-btn" id="presetSave">Save</button>
@@ -66,6 +87,11 @@
     </aside>
     <main class="host-stage">
       <iframe class="host-frame" id="toolFrame"></iframe>
+      <div class="host-empty" id="emptyState" hidden>
+        <h1>No tools yet</h1>
+        <p>Ask your agent for a tool. It writes one HTML file into <code>tools/</code> and lists it in this file.</p>
+        <p>Want to see what a tool looks like first? Open the <a href="examples/index.html">example tools</a>.</p>
+      </div>
     </main>
   </div>
 
@@ -73,15 +99,14 @@
 const V = Kazam.version;
 const CHECKER = "repeating-conic-gradient(#9aa0ac 0% 25%, #f5f6f8 0% 50%) 50% / 12px 12px";
 
+// Your tools. One entry per HTML file in tools/ — the frame lists them in this order.
+// Add a tool by giving it an id (matching the tool's own `id`), a menu name, and its path:
+//
+//   { id: "my-tool", name: "My Tool", path: "tools/my-tool.html" },
+//
+// The worked examples are not listed here on purpose. They live in examples/ and run
+// from their own frame at examples/index.html, so this one stays yours.
 const TOOLS = [
-  { id: "dither-shape",    name: "Shape Generator", path: "tools/dither-shape.html" },
-  { id: "dither-gradient", name: "Gradient Dither", path: "tools/dither-gradient.html" },
-  { id: "pixelator",       name: "Pixelator",       path: "tools/pixelator.html" },
-  { id: "letterfall",      name: "Letterfall",      path: "tools/letterfall.html" },
-  { id: "orbits",          name: "Orbits",          path: "tools/orbits.html" },
-  { id: "image-dither",    name: "Image Dither",    path: "tools/image-dither.html" },
-  { id: "showcase",        name: "Showcase",        path: "tools/showcase.html" },
-  { id: "starter",         name: "Starter",         path: "tools/_template.html" },
 ];
 
 const frame = document.getElementById("toolFrame");
@@ -256,12 +281,25 @@ document.getElementById("presetCopy").addEventListener("click", e => {
 // ---- theme (backdrop follows it, same neutral tone for every tool) ----
 document.getElementById("themeBtn").addEventListener("click", () => {
   document.documentElement.classList.toggle("dark");
+  if (!current) return;                       // no tool loaded → nothing to tell
   post({ type: "kazam/tokens", dark: isDark() });
   post({ type: "kazam/preview-bg", color: neutralBg() });
 });
 
 // ---- boot ----
-loadTool(TOOLS[0]);
+// With no tools the switcher, presets and export have nothing to act on, so the
+// sidebar chrome steps aside and the stage explains how to get a tool in here.
+function showEmptyState() {
+  document.getElementById("toolSelWrap").hidden = true;
+  document.getElementById("presetsRow").hidden = true;
+  document.getElementById("exportSection").hidden = true;
+  frame.hidden = true;
+  document.querySelector(".host").classList.add("is-empty");
+  document.getElementById("emptyState").hidden = false;
+}
+
+if (TOOLS.length) loadTool(TOOLS[0]);
+else showEmptyState();
 </script>
 </body>
 </html>

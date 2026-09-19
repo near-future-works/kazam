@@ -8,6 +8,20 @@ a tool switcher, consistent theming, presets, and unified export.
 This file is the **living contract**. It is the source of truth for how tools and the
 runtime talk to each other. Keep it updated as the contract firms up.
 
+## Start here: building a tool for the user
+
+| | |
+|---|---|
+| **Write the tool at** | `tools/<kebab-name>.html` |
+| **Start from** | `examples/_template.html` |
+| **Register it in** | the `TOOLS` array in `/index.html` |
+| **Never edit** | anything in `examples/` |
+
+`tools/` is the user's folder and starts **empty**. Put only what the user asked for in it.
+Do not seed it with the examples, and do not add the user's tool to the examples frame.
+`examples/` is reference material to read and copy patterns from; it has its own frame at
+`examples/index.html`. Full detail in *Where a new tool goes*, below.
+
 ---
 
 ## The core model: tools are self-contained, the frame is optional
@@ -230,23 +244,33 @@ asset tool needs them.
 
 ```text
 /
-├── CLAUDE.md              # this file — the living contract + worked example
+├── CLAUDE.md             # this file — the living contract + worked example
 ├── README.md             # project overview
-├── index.html            # the frame host app: tool switcher, theming, presets — the entry point
-│                         #   ("hit go" file after unzipping). References frame/kazam.js + tools/*.
+├── index.html            # THE USER'S FRAME: tool switcher, theming, presets — the entry point
+│                         #   ("hit go" file after unzipping). Ships with an EMPTY `TOOLS`
+│                         #   array. References frame/kazam.js + tools/*.
 ├── frame/
 │   └── kazam.js          # the runtime: defineTool, schema→controls, store, preview,
 │                         #   export/copy, tokens, seeded RNG, standalone shell + iframe bridge
 │                         #   (also injects component CSS + theme tokens — one <script> per tool)
-├── tools/
-│   ├── _template.html    # minimal worked example — copy this to start a new tool
-│   └── dither-shape.html # the Shape generator, ported onto the runtime          (Phase 3)
+├── tools/                # THE USER'S TOOLS — starts empty, one HTML file per tool
+│   └── README.md         #   how to add one (the only thing shipped here)
+├── examples/             # WORKED EXAMPLES — reference only, never the user's tool set
+│   ├── index.html        #   the examples frame: a copy of /index.html pointed at this folder
+│   ├── _template.html    #   minimal worked example — copy this to start a new tool
+│   ├── dither-shape.html #   the Shape generator, ported onto the runtime
+│   └── …                 #   pixelator, letterfall, orbits, image-dither, dither-gradient, showcase
 └── .claude/launch.json   # local static-server config for the preview tooling
 ```
 
-The host app lives at the repo **root** (`index.html`) so that unzipping the folder and
-double-clicking it is the obvious way to start; it pulls in `frame/kazam.js` and embeds each
-`tools/*.html` in an iframe.
+**Two frames, one runtime.** `/index.html` is the user's — it lists only what is in `tools/`
+and ships empty, with an empty state that points at the examples. `examples/index.html` is
+the showroom — a copy of the same host chrome with the examples hard-coded in its `TOOLS`
+array. Both pull in `frame/kazam.js` and embed each tool in an iframe.
+
+The two frames duplicate the host chrome on purpose (it beat the alternatives on simplicity).
+**When you change the chrome in one, make the same change in the other.** Each file carries a
+comment at the top saying so.
 
 A tool includes the runtime with a single relative `<script src="../frame/kazam.js">`,
 which also injects the shared CSS and theme tokens — so the only thing in a tool's `<head>`
@@ -263,13 +287,27 @@ share a single tool remains the frame's "Copy tool as HTML" (runtime inlined →
 
 ---
 
-## The bundled tools are examples (delete freely)
+## Where a new tool goes (read this before writing one)
 
-The tools in `tools/` (Shape Generator, Pixelator, Image Dither, Orbits, Gradient Dither,
-Letterfall) ship as **worked examples** — reference material, not a fixed product. A user is
-expected to keep the ones they like, delete the rest, and fill `tools/` with their own. When
-a user asks to remove an example tool, delete its `tools/*.html` file and its entry in the
-`TOOLS` array in `index.html` — that's all it takes. Never treat the examples as load-bearing.
+**A tool you build for the user goes in `tools/`, and nowhere else.**
+
+1. Write `tools/<kebab-name>.html`. Start from `examples/_template.html`.
+2. Add one line to the `TOOLS` array in `/index.html`:
+   `{ id: "<kebab-name>", name: "<Menu Name>", path: "tools/<kebab-name>.html" },`
+3. That is the whole wiring. The frame does the rest.
+
+**Do not touch `examples/` when building a tool.** Do not copy examples into `tools/`, do not
+add the new tool to `examples/index.html`, and do not "helpfully" populate the user's frame
+with the examples. `tools/` holds what the user asked for — nothing else. A user who asks for
+one tool gets a frame with one tool in it.
+
+`examples/` is reference material: read it freely, copy patterns and maths out of it, and
+point the user at `examples/index.html` when they want to see what the format can do. The
+files there are not load-bearing — a user may delete any of them, and nothing breaks.
+
+When a user asks to remove a tool, delete its `tools/*.html` file and its entry in the `TOOLS`
+array in `/index.html`. To remove an example, delete `examples/*.html` and its entry in
+`examples/index.html`.
 
 ---
 
@@ -308,10 +346,10 @@ control wiring, export code, and panel CSS are deleted — the runtime owns all 
 
 ```text
 Import the attached HTML tool into Kazam as tools/<name>.html. Read CLAUDE.md first,
-copy tools/_template.html as the starting shape, and rewrite it onto the contract:
+copy examples/_template.html as the starting shape, and rewrite it onto the contract:
 lift every value I might tweak into the settings schema, move the drawing into build(),
 and replace any Math.random with ctx.random so it stays deterministic. Then add it to
-the TOOLS list in index.html so the frame picks it up.
+the TOOLS list in index.html so the frame picks it up. Leave examples/ alone.
 ```
 
 ```text
@@ -371,7 +409,7 @@ is git-ignored. Nothing here is needed to open a tool.
 2. **Settings layout.** The schema carries a `col: 'half'` hint, packed into two-up rows by
    the runtime. Standalone and frame share the same pairing path — no divergence (the brief
    single-column standalone was unified once it proved to add complexity, not remove it).
-3. **Port fidelity (Phase 3).** The ported `tools/dither-shape.html` must reach **visual and
+3. **Port fidelity (Phase 3).** The ported `examples/dither-shape.html` must reach **visual and
    feature parity** with the original `dither-shape.html` — same artwork, same controls —
    driven entirely by the runtime. That is the proof the contract is sufficient.
 
@@ -386,12 +424,12 @@ is git-ignored. Nothing here is needed to open a tool.
 1. **Scaffold + contract** — this file, repo layout, worked example. ✅
 2. **Runtime** (`frame/kazam.js`), standalone-first: `defineTool`, schema→controls, store +
    serialise, preview host, export/copy, tokens, seeded RNG. ✅
-3. **Port the Shape generator** to `tools/dither-shape.html` — only `buildSVG` + its geometry
+3. **Port the Shape generator** to `examples/dither-shape.html` — only `buildSVG` + its geometry
    and dither maths; full visual + feature parity when opened directly. ✅
 4. **Frame host** (`index.html`, repo root): tool switcher, iframe + `postMessage`, two-up pairing,
    theming, presets, unified export. Same tool file works both ways, unchanged. ✅
 5. **Generalise**: `canvas` render target + a minimal canvas tool
-   (`tools/dither-gradient.html`). ✅
+   (`examples/dither-gradient.html`). ✅
 
 ### Also built since
 
@@ -399,12 +437,12 @@ is git-ignored. Nothing here is needed to open a tool.
   prompt, copy/download the tool as a self-contained HTML, import a tool, load settings). The
   inliner ships via "Copy/Download tool as HTML".
 - **Animation** — `duration` + `frame(state, t, ctx)`, transport, deterministic per-frame RNG,
-  and **GIF (self-written encoder) + WebM (MediaRecorder)** export. Demo: `tools/orbits.html`.
-- **Image upload** — the `image` asset field. Demo: `tools/image-dither.html`.
+  and **GIF (self-written encoder) + WebM (MediaRecorder)** export. Demo: `examples/orbits.html`.
+- **Image upload** — the `image` asset field. Demo: `examples/image-dither.html`.
 - **Swatches + preset launcher** — the `swatches` field (editable colour chips) and a `select`
-  with `presets`/`writes` that seeds another field. Demo: `tools/pixelator.html`.
+  with `presets`/`writes` that seeds another field. Demo: `examples/pixelator.html`.
 - **Dynamic timelines** — `frameCount(state)` sizes an animation to its content. Demo:
-  `tools/letterfall.html`, a physics-driven poster generator (per-glyph outline + SAT collision)
+  `examples/letterfall.html`, a physics-driven poster generator (per-glyph outline + SAT collision)
   that precomputes its whole trajectory once per state (seeded, never `Math.random`) and runs
   until every letter settles.
 
@@ -415,5 +453,6 @@ is git-ignored. Nothing here is needed to open a tool.
   per frame is a TODO.
 - **Tighten `postMessage` origin** once tools are served from a known origin.
 
-> Tools live in `tools/`; each is one HTML file = `defineTool({ settings, build })` + its maths.
+> The user's tools live in `tools/` (empty by default); the worked examples live in `examples/`.
+> Each is one HTML file = `defineTool({ settings, build })` + its maths.
 > Everything else is the runtime. Work in small, reviewable steps; pause for sign-off between phases.
