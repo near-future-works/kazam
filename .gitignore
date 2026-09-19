@@ -4,3 +4,6 @@ node_modules/
 
 # macOS
 .DS_Store
+
+# Local browser state from the web-inspector dev tool. Never ships.
+.mcp-web-inspector/

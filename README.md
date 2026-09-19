@@ -41,28 +41,37 @@ Kazam is a lightweight frame that loads individual tools and gives them consiste
 
 ```
 kazam/
-├── index.html       # the frame — open this to run and switch between your tools
+├── index.html       # your frame — open this to run and switch between your tools
 ├── CLAUDE.md        # the guide your agent reads to build and edit tools here
 ├── frame/           # the shared machinery every tool uses
-└── tools/           # the tools themselves, one HTML file each
+├── tools/           # your tools, one HTML file each — starts empty
+└── examples/        # worked examples to learn from, with their own frame
+    └── index.html   #   open this to see what a Kazam tool can do
 ```
 
-New tools are built by your agent reading [`CLAUDE.md`](CLAUDE.md) and following the conventions it describes, so everything stays consistent without you wiring it up by hand. [`tools/_template.html`](tools/_template.html) is the minimal starting shape.
+New tools are built by your agent reading [`CLAUDE.md`](CLAUDE.md) and following the conventions it describes, so everything stays consistent without you wiring it up by hand. [`examples/_template.html`](examples/_template.html) is the minimal starting shape.
 
-The tools that come with Kazam — Shape Generator, Pixelator, Image Dither, Orbits, Gradient Dither, and Letterfall — are **examples**. They're there to show what's possible and to give your agent something to learn from. Keep the ones you like, **delete the rest**, and fill `tools/` with your own. That's the whole point.
+### Your tools and the examples are kept apart
+
+`tools/` **starts empty**. It fills up with the tools you ask for, and nothing else — so your frame is a list of the tools you actually use, from the first one onwards.
+
+The tools that come with Kazam — Shape Generator, Pixelator, Image Dither, Orbits, Gradient Dither, Letterfall, and Showcase — are **examples**, and they live in `examples/`. They're there to show what's possible and to give your agent something to learn from. Open [`examples/index.html`](examples/index.html) to play with them in the same frame.
+
+Like one? Ask your agent to copy it into your tools. Want them gone? Delete the `examples/` folder — nothing else depends on it.
 
 ## Getting started
 
 Nothing to install:
 
 1. Download the repo as a ZIP (green **Code** button on GitHub → **Download ZIP**) and unzip it. Or, if you use git: `git clone https://github.com/near-future-works/kazam.git`
-2. **Double-click `index.html`** in the unzipped folder. It opens in your browser with all the tools, a menu to switch between them, theming, and export. Start here and pick a tool from the menu.
+2. **Double-click `examples/index.html`** to see what these tools are. It opens in your browser with the example tools, a menu to switch between them, theming, and export. Have a play.
+3. **Double-click `index.html`** in the main folder. This one is yours, and it's empty until you put a tool in it.
 
 > **Doing this for a workshop or want a stable version?** The **Download ZIP** button always gives the latest in-progress copy, which can change day to day. For a snapshot that won't shift under you, grab a numbered version from the [Releases](https://github.com/near-future-works/kazam/releases) page — and if a facilitator shared a specific version, download that exact one so everyone's on the same page.
 
-Each tool can also be opened on its own — double-click any file in `tools/` — but the frame is the main way in.
+Now point your AI coding agent (such as Claude Code) at the folder and ask it to build a tool, or to bring in one you've already made. It reads `CLAUDE.md`, drops a new file into `tools/`, adds it to your frame, and leaves the examples alone.
 
-Then point your AI coding agent (such as Claude Code) at the folder and ask it to build a tool, or to bring in one you've already made. It reads `CLAUDE.md`, drops a new file into `tools/`, and the frame picks it up.
+Each tool can also be opened on its own — double-click any HTML file in `tools/` or `examples/` — but the frame is the main way in.
 
 ### If you're a bit more technical (optional)
 
@@ -81,7 +90,8 @@ There's also optional tooling for anyone editing the shared machinery itself —
 
 - **The frame opens blank.** Some browsers block a page from reading the files next to it when you open it straight from disk. Try a different browser (Chrome and Edge are the most forgiving), or run the small local web server described just above.
 - **I can't find my export.** Copying puts the image on your clipboard, ready to paste. Downloading saves it to your browser's usual **Downloads** folder.
-- **I want to remove a tool.** Just ask your agent to delete it — or remove the tool's file from the `tools/` folder yourself. The example tools are meant to be cleared out as you add your own.
+- **I want to remove a tool.** Ask your agent to delete it, or remove the tool's file from `tools/` and its line from `index.html` yourself.
+- **My frame is empty.** That's the starting state — `tools/` ships with nothing in it. Ask your agent for a tool, or open `examples/index.html` to see the example ones.
 
 ## What's here
 
@@ -90,7 +100,7 @@ There's also optional tooling for anyone editing the shared machinery itself —
 - Presets you can copy to the clipboard and paste back into your agent to recreate or tweak — handy for brand-specific styles.
 - One-click export: copy or download as PNG and SVG, plus GIF and WebM for animated tools.
 - Export and import of whole tools as a single HTML file, to send a teammate over Slack or email.
-- A starter template (`_template.html`) plus a handful of example tools to learn from and remix.
+- A starter template (`examples/_template.html`) plus a handful of example tools to learn from and remix, in their own frame.
 - Light and dark mode.
 - A shared palette and type styles to use inside the tools you make.
 - Animation support, with a play/scrub timeline for tools that move.
@@ -106,7 +116,7 @@ Ideas being considered, not promises:
 
 ## Contributing
 
-Kazam is meant to be forked, copied, and made your own. If you build something worth sharing, open a pull request — or use the frame's **Copy tool as HTML** to send a friend a single file they can open anywhere. (A raw `tools/` file shared on its own will tell them where to get the rest rather than running, so the self-contained export is the tidier hand-off.) Issues and ideas are welcome.
+Kazam is meant to be forked, copied, and made your own. If you build something worth sharing, open a pull request — or use the frame's **Copy tool as HTML** to send a friend a single file they can open anywhere. (A raw tool file shared on its own will tell them where to get the rest rather than running, so the self-contained export is the tidier hand-off.) Issues and ideas are welcome.
 
 One thing worth a thought before you share: a tool is just a file, and it carries whatever you put in it. Don't leave anything private — a key, a token, an internal address — inside a tool you're about to hand to someone else.
 
